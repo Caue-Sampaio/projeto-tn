@@ -1,0 +1,28 @@
+{
+  "name": "backup_manual_20251007_194439",
+  "type": "manual",
+  "timestamp": "2025-10-07T19:44:39.844374",
+  "files": {
+    "database": {
+      "size_mb": 0.05,
+      "files": [
+        "teste.db",
+        "dump.sql"
+      ]
+    },
+    "reports": {
+      "size_mb": 0.0,
+      "file_count": 0
+    },
+    "logs": {
+      "size_mb": 0.01,
+      "file_count": 3
+    },
+    "config": {
+      "size_mb": 0.0,
+      "file_count": 2
+    }
+  },
+  "total_size_mb": 0.05739307403564453,
+  "status": "in_progress"
+}

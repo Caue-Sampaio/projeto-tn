@@ -1,0 +1,15 @@
+{
+  "auto_backup": true,
+  "backup_interval_hours": 24,
+  "max_backups": 10,
+  "backup_reports": true,
+  "backup_logs": true,
+  "backup_images": false,
+  "compression_level": 6,
+  "last_backup": "2026-10-01T21:27:59.060862",
+  "backup_stats": {
+    "total_backups": 12,
+    "last_successful": "2026-10-01T21:27:59.060862",
+    "total_size_mb": 17.64
+  }
+}

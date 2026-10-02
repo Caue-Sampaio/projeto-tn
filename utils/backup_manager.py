@@ -1,5 +1,6 @@
 # utils/backup_manager.py
 import os
+import stat
 import shutil
 import zipfile
 import json
@@ -122,8 +123,10 @@ class BackupManager:
             # 7. Compacta backup
             zip_success = self._compress_backup(backup_path, backup_info)
             
-            # 8. Limpa backup temporário
-            shutil.rmtree(backup_path)
+            # 8. Limpa backup temporário. Em Windows/OneDrive, o copytree pode
+            # preservar o atributo somente leitura de diretórios (ex.: reports),
+            # fazendo shutil.rmtree falhar com WinError 5.
+            self._safe_rmtree(backup_path)
             
             # Atualiza estatísticas
             if db_backup_success and zip_success:
@@ -144,9 +147,12 @@ class BackupManager:
             # Tenta limpar diretório temporário em caso de erro
             if backup_path.exists():
                 try:
-                    shutil.rmtree(backup_path)
-                except:
-                    pass
+                    self._safe_rmtree(backup_path)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Não foi possível remover o diretório temporário "
+                        f"{backup_path}: {cleanup_error}"
+                    )
             
             return {
                 "name": backup_name,
@@ -156,6 +162,23 @@ class BackupManager:
                 "error": str(e)
             }
     
+    @staticmethod
+    def _rmtree_remove_readonly(func, path, exc_info):
+        """Remove atributo somente leitura e repete uma operação do rmtree."""
+        try:
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            func(path)
+        except Exception:
+            # Mantém a exceção original caso a segunda tentativa também falhe.
+            raise exc_info[1]
+
+    def _safe_rmtree(self, path: Path):
+        """Remove uma árvore mesmo quando diretórios copiados estão read-only."""
+        path = Path(path)
+        if not path.exists():
+            return
+        shutil.rmtree(path, onerror=self._rmtree_remove_readonly)
+
     def _backup_database(self, backup_path: Path, backup_info: Dict) -> bool:
         """Faz backup do banco de dados"""
         try:

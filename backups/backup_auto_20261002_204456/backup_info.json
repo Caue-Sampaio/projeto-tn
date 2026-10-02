@@ -1,0 +1,28 @@
+{
+  "name": "backup_auto_20261002_204456",
+  "type": "auto",
+  "timestamp": "2026-10-02T20:44:56.919771",
+  "files": {
+    "database": {
+      "size_mb": 0.07,
+      "files": [
+        "teste.db",
+        "dump.sql"
+      ]
+    },
+    "reports": {
+      "size_mb": 1.8,
+      "file_count": 2
+    },
+    "logs": {
+      "size_mb": 0.05,
+      "file_count": 6
+    },
+    "config": {
+      "size_mb": 0.0,
+      "file_count": 2
+    }
+  },
+  "total_size_mb": 1.9148406982421875,
+  "status": "in_progress"
+}

@@ -36,7 +36,7 @@ class FakeDMM:
 
 class FakeScope:
     def measure_frequency(self):
-        return 1000.0
+        return 1000.0      
     def get_waveform_summary(self):
         return "Senoidal"
 

@@ -239,6 +239,10 @@ class BoardDetailsDialog(QDialog):
         self.setStyleSheet("""
             QDialog {
                 background-color: #F8F9FA;
+                color: #1E293B;
+            }
+            QLabel {
+                color: #1E293B;
             }
             QGroupBox {
                 font-weight: bold;
@@ -246,21 +250,37 @@ class BoardDetailsDialog(QDialog):
                 border-radius: 5px;
                 margin-top: 10px;
                 padding-top: 10px;
+                color: #1E293B;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
+                color: #1E293B;
             }
             QTableWidget {
                 border: 1px solid #BDC3C7;
                 border-radius: 5px;
                 background-color: white;
+                color: #1E293B;
             }
             QListWidget {
                 border: 1px solid #BDC3C7;
                 border-radius: 5px;
                 background-color: white;
+                color: #1E293B;
+            }
+            QDialogButtonBox QPushButton {
+                background-color: #0284C7;
+                color: white;
+                border: 1px solid #0369A1;
+                border-radius: 5px;
+                padding: 8px 20px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QDialogButtonBox QPushButton:hover {
+                background-color: #0369A1;
             }
         """)
         
@@ -409,9 +429,11 @@ class PlacaTab(QWidget):
         
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Buscar placas...")
+        self.set_field_style(self.search_input)
         self.search_input.textChanged.connect(self.filter_boards)
         
-        self.active_only_cb = QCheckBox("Apenas ativas")  # ✅ AGORA CORRETO
+        self.active_only_cb = QCheckBox("Apenas ativas")
+        self.active_only_cb.setStyleSheet("color: #1E293B; font-size: 12px; font-weight: 500;")
         self.active_only_cb.setChecked(True)
         self.active_only_cb.toggled.connect(self.filter_boards)
         
@@ -489,75 +511,105 @@ class PlacaTab(QWidget):
         """Aplica estilos aos componentes"""
         button_style = """
             QPushButton {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 color: white;
-                border: none;
+                border: 1px solid #0369A1;
                 border-radius: 5px;
                 padding: 8px 15px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #2980B9;
+                background-color: #0369A1;
             }
             QPushButton:pressed {
-                background-color: #21618C;
+                background-color: #075985;
             }
             QPushButton:disabled {
-                background-color: #BDC3C7;
-                color: #7F8C8D;
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
             }
         """
         
         self.salvar_btn.setStyleSheet(button_style)
-        self.import_btn.setStyleSheet(button_style)
         self.details_btn.setStyleSheet(button_style)
         
-        self.limpar_btn.setStyleSheet("""
+        self.import_btn.setStyleSheet("""
             QPushButton {
-                background-color: #95A5A6;
+                background-color: #0F766E;
                 color: white;
-                border: none;
+                border: 1px solid #0D9488;
                 border-radius: 5px;
                 padding: 8px 15px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #7F8C8D;
+                background-color: #0D9488;
+            }
+            QPushButton:pressed {
+                background-color: #115E59;
+            }
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
+            }
+        """)
+        
+        self.limpar_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #94A3B8;
+                color: white;
+                border: 1px solid #64748B;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #64748B;
             }
         """)
         
         self.delete_btn.setStyleSheet("""
             QPushButton {
-                background-color: #E74C3C;
+                background-color: #EF4444;
                 color: white;
-                border: none;
+                border: 1px solid #DC2626;
                 border-radius: 5px;
                 padding: 8px 15px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #C0392B;
+                background-color: #DC2626;
+            }
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
             }
         """)
         
         self.board_list.setStyleSheet("""
             QListWidget {
                 background-color: white;
+                color: #1E293B;
                 border: 1px solid #BDC3C7;
                 border-radius: 5px;
                 padding: 5px;
             }
             QListWidget::item {
                 padding: 10px;
+                color: #1E293B;
                 border-bottom: 1px solid #ECF0F1;
             }
             QListWidget::item:selected {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 color: white;
                 border-radius: 3px;
             }
             QListWidget::item:hover {
                 background-color: #EBF5FB;
+                color: #1E293B;
             }
         """)
         
@@ -568,9 +620,11 @@ class PlacaTab(QWidget):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
             }
             QLineEdit:focus {
-                border-color: #3498DB;
+                border-color: #0284C7;
+                color: #1E293B;
             }
         """)
         
@@ -583,10 +637,14 @@ class PlacaTab(QWidget):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
             }
             QLineEdit:focus {
-                border-color: #3498DB;
-                background-color: #F8F9FA;
+                border-color: #0284C7;
+                background-color: #F8FAFC;
+                color: #1E293B;
             }
         """)
         
@@ -688,9 +746,35 @@ class PlacaTab(QWidget):
         actions_layout = QHBoxLayout()
         
         details_btn = QPushButton("👁️ Ver Detalhes Completos")
+        details_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: white;
+                border: 1px solid #0369A1;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+            }
+        """)
         details_btn.clicked.connect(self.view_board_details)
         
         image_btn = QPushButton("🖼️ Adicionar Imagem")
+        image_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0F766E;
+                color: white;
+                border: 1px solid #0D9488;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0D9488;
+            }
+        """)
         image_btn.clicked.connect(self.add_image)
         
         actions_layout.addWidget(details_btn)

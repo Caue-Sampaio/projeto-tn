@@ -146,6 +146,10 @@ class StepForm(QDialog):
         self.setStyleSheet("""
             QDialog {
                 background-color: #F8F9FA;
+                color: #1E293B;
+            }
+            QLabel {
+                color: #1E293B;
             }
             QGroupBox {
                 font-weight: bold;
@@ -153,11 +157,39 @@ class StepForm(QDialog):
                 border-radius: 5px;
                 margin-top: 10px;
                 padding-top: 10px;
+                color: #1E293B;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
+                color: #1E293B;
+            }
+            QComboBox, QSpinBox {
+                border: 2px solid #BDC3C7;
+                border-radius: 5px;
+                padding: 6px 10px;
+                font-size: 13px;
+                background-color: white;
+                color: #1E293B;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
+            }
+            QDialogButtonBox QPushButton {
+                background-color: #0284C7;
+                color: white;
+                border: 1px solid #0369A1;
+                border-radius: 5px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QDialogButtonBox QPushButton:hover {
+                background-color: #0369A1;
             }
         """)
         
@@ -171,15 +203,20 @@ class StepForm(QDialog):
                     padding: 8px 12px;
                     font-size: 14px;
                     background-color: white;
+                    color: #1E293B;
                     min-height: 20px;
+                    selection-background-color: #0284C7;
+                    selection-color: white;
                 }
                 QLineEdit:focus {
-                    border-color: #3498DB;
-                    background-color: #F8F9FA;
+                    border-color: #0284C7;
+                    background-color: #F8FAFC;
+                    color: #1E293B;
                 }
                 QLineEdit[error="true"] {
                     border-color: #E74C3C;
                     background-color: #FDEDEC;
+                    color: #1E293B;
                 }
             """)
             
@@ -469,6 +506,20 @@ class PlanEditor(QWidget):
         self.description_input = QTextEdit()
         self.description_input.setPlaceholderText("Descreva o propósito e escopo deste plano de teste...")
         self.description_input.setMaximumHeight(100)
+        self.description_input.setStyleSheet("""
+            QTextEdit {
+                border: 2px solid #BDC3C7;
+                border-radius: 5px;
+                padding: 6px 10px;
+                font-size: 13px;
+                background-color: white;
+                color: #1E293B;
+            }
+            QTextEdit:focus {
+                border-color: #0284C7;
+                color: #1E293B;
+            }
+        """)
         basic_layout.addRow("Descrição:", self.description_input)
         
         basic_group.setLayout(basic_layout)
@@ -480,6 +531,7 @@ class PlanEditor(QWidget):
         
         self.active_checkbox = QCheckBox("Plano ativo")
         self.active_checkbox.setChecked(True)
+        self.active_checkbox.setStyleSheet("color: #1E293B; font-weight: 500; font-size: 13px;")
         self.active_checkbox.setToolTip("Planos inativos não aparecem para execução")
         config_layout.addWidget(self.active_checkbox)
         
@@ -495,41 +547,79 @@ class PlanEditor(QWidget):
         """Aplica estilos aos componentes"""
         button_style = """
             QPushButton {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 color: white;
-                border: none;
+                border: 1px solid #0369A1;
                 border-radius: 5px;
                 padding: 8px 15px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #2980B9;
+                background-color: #0369A1;
             }
             QPushButton:pressed {
-                background-color: #21618C;
+                background-color: #075985;
             }
             QPushButton:disabled {
-                background-color: #BDC3C7;
-                color: #7F8C8D;
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
             }
         """
         
         self.add_step_button.setStyleSheet(button_style)
         self.edit_step_button.setStyleSheet(button_style)
-        self.delete_step_button.setStyleSheet(button_style)
-        self.save_button.setStyleSheet(button_style)
-        
-        self.close_button.setStyleSheet("""
+        self.delete_step_button.setStyleSheet("""
             QPushButton {
-                background-color: #95A5A6;
+                background-color: #EF4444;
                 color: white;
-                border: none;
+                border: 1px solid #DC2626;
                 border-radius: 5px;
                 padding: 8px 15px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #7F8C8D;
+                background-color: #DC2626;
+            }
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
+            }
+        """)
+        self.save_button.setStyleSheet("""
+            QPushButton {
+                background-color: #10B981;
+                color: white;
+                border: 1px solid #059669;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+            QPushButton:pressed {
+                background-color: #047857;
+            }
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
+            }
+        """)
+        
+        self.close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #94A3B8;
+                color: white;
+                border: 1px solid #64748B;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #64748B;
             }
         """)
         
@@ -539,20 +629,22 @@ class PlanEditor(QWidget):
         self.step_table.setStyleSheet("""
             QTableWidget {
                 background-color: white;
+                color: #1E293B;
                 border: 1px solid #BDC3C7;
                 border-radius: 5px;
                 gridline-color: #ECF0F1;
             }
             QTableWidget::item {
                 padding: 8px;
+                color: #1E293B;
                 border-bottom: 1px solid #ECF0F1;
             }
             QTableWidget::item:selected {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 color: white;
             }
             QHeaderView::section {
-                background-color: #34495E;
+                background-color: #1E293B;
                 color: white;
                 padding: 8px;
                 border: none;
@@ -570,10 +662,14 @@ class PlanEditor(QWidget):
                     padding: 8px 12px;
                     font-size: 14px;
                     background-color: white;
+                    color: #1E293B;
+                    selection-background-color: #0284C7;
+                    selection-color: white;
                 }
                 QLineEdit:focus {
-                    border-color: #3498DB;
-                    background-color: #F8F9FA;
+                    border-color: #0284C7;
+                    background-color: #F8FAFC;
+                    color: #1E293B;
                 }
             """)
             

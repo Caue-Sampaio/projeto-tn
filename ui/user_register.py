@@ -90,10 +90,17 @@ class UserRegisterDialog(QDialog):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
                 min-width: 150px;
             }
             QComboBox:focus {
-                border-color: #3498DB;
+                border-color: #0284C7;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
             }
             QComboBox::drop-down {
                 border: none;
@@ -115,7 +122,7 @@ class UserRegisterDialog(QDialog):
             "• <b>Operator</b>: Pode executar testes e gerenciar placas<br>"
             "• <b>Admin</b>: Acesso completo ao sistema"
         )
-        roles_info.setStyleSheet("color: #7F8C8D; font-size: 11px; background-color: #F8F9FA; padding: 10px; border-radius: 5px;")
+        roles_info.setStyleSheet("color: #475569; font-size: 11px; background-color: #F8FAFC; padding: 10px; border-radius: 5px; border: 1px solid #E2E8F0;")
         roles_info.setWordWrap(True)
         layout.addRow("", roles_info)
         
@@ -138,16 +145,16 @@ class UserRegisterDialog(QDialog):
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.setStyleSheet("""
             QPushButton {
-                background-color: #95A5A6;
+                background-color: #94A3B8;
                 color: white;
-                border: none;
+                border: 1px solid #64748B;
                 border-radius: 5px;
                 font-size: 14px;
                 font-weight: bold;
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #7F8C8D;
+                background-color: #64748B;
             }
         """)
         self.cancel_button.clicked.connect(self.reject)
@@ -158,20 +165,21 @@ class UserRegisterDialog(QDialog):
         self.register_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.register_button.setStyleSheet("""
             QPushButton {
-                background-color: #27AE60;
+                background-color: #10B981;
                 color: white;
-                border: none;
+                border: 1px solid #059669;
                 border-radius: 5px;
                 font-size: 14px;
                 font-weight: bold;
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #229954;
+                background-color: #059669;
             }
             QPushButton:disabled {
-                background-color: #BDC3C7;
-                color: #7F8C8D;
+                background-color: #CBD5E1;
+                color: #64748B;
+                border: 1px solid #94A3B8;
             }
         """)
         self.register_button.clicked.connect(self.register_user)
@@ -190,14 +198,19 @@ class UserRegisterDialog(QDialog):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
             }
             QLineEdit:focus {
-                border-color: #3498DB;
-                background-color: #F8F9FA;
+                border-color: #0284C7;
+                background-color: #F8FAFC;
+                color: #1E293B;
             }
             QLineEdit[error="true"] {
                 border-color: #E74C3C;
                 background-color: #FDEDEC;
+                color: #1E293B;
             }
         """)
         

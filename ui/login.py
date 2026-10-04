@@ -100,10 +100,14 @@ class LoginDialog(QDialog):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
             }
             QLineEdit:focus {
-                border-color: #3498DB;
-                background-color: #F8F9FA;
+                border-color: #0284C7;
+                background-color: #F8FAFC;
+                color: #1E293B;
             }
         """)
         
@@ -127,16 +131,20 @@ class LoginDialog(QDialog):
                 padding: 8px 12px;
                 font-size: 14px;
                 background-color: white;
+                color: #1E293B;
+                selection-background-color: #0284C7;
+                selection-color: white;
             }
             QLineEdit:focus {
-                border-color: #3498DB;
-                background-color: #F8F9FA;
+                border-color: #0284C7;
+                background-color: #F8FAFC;
+                color: #1E293B;
             }
         """)
         
         # Checkbox para mostrar senha
         self.show_password_cb = QCheckBox("Mostrar senha")
-        self.show_password_cb.setStyleSheet("color: #7F8C8D; font-size: 12px;")
+        self.show_password_cb.setStyleSheet("color: #334155; font-size: 12px; font-weight: 500;")
         self.show_password_cb.toggled.connect(self.toggle_password_visibility)
         
         password_layout.addWidget(password_label)
@@ -159,7 +167,7 @@ class LoginDialog(QDialog):
                 border-radius: 2px;
             }
             QProgressBar::chunk {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 border-radius: 2px;
             }
         """)
@@ -174,7 +182,7 @@ class LoginDialog(QDialog):
     def create_buttons(self):
         """Cria botões de ação"""
         layout = QVBoxLayout()
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         
         # Botão de login
         self.login_button = QPushButton("Entrar no Sistema")
@@ -182,42 +190,49 @@ class LoginDialog(QDialog):
         self.login_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_button.setStyleSheet("""
             QPushButton {
-                background-color: #3498DB;
+                background-color: #0284C7;
                 color: white;
-                border: none;
-                border-radius: 5px;
+                border: 1px solid #0369A1;
+                border-radius: 6px;
                 font-size: 14px;
                 font-weight: bold;
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #2980B9;
+                background-color: #0369A1;
+                border-color: #075985;
             }
             QPushButton:pressed {
-                background-color: #21618C;
+                background-color: #075985;
             }
             QPushButton:disabled {
-                background-color: #BDC3C7;
-                color: #7F8C8D;
+                background-color: #CBD5E1;
+                color: #475569;
+                border: 1px solid #94A3B8;
             }
         """)
         self.login_button.clicked.connect(self.check_login)
         
         # Botão de cadastro
         self.register_button = QPushButton("Cadastrar Novo Usuário")
-        self.register_button.setMinimumHeight(35)
+        self.register_button.setMinimumHeight(40)
         self.register_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.register_button.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                color: #3498DB;
-                border: 2px solid #3498DB;
-                border-radius: 5px;
-                font-size: 12px;
+                background-color: #FFFFFF;
+                color: #0284C7;
+                border: 2px solid #0284C7;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
                 padding: 8px;
             }
             QPushButton:hover {
-                background-color: #3498DB;
+                background-color: #0284C7;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #0369A1;
                 color: white;
             }
         """)

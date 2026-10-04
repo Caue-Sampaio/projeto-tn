@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QProgressBar, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPalette, QColor
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from db.models import Base, User, BoardModel, BoardUnit, TestPoint, BoardImage, TestPlan
@@ -149,6 +150,7 @@ class TestApp(QWidget):
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.output.setStyleSheet("background-color: white; color: #1E293B; border: 1.5px solid #CBD5E1; border-radius: 6px; padding: 6px;")
 
         self.test_button = QPushButton("▶ Executar Teste")
         self.test_button.clicked.connect(self.execute_test)
@@ -171,6 +173,22 @@ class TestApp(QWidget):
 
         self.auto_report_button = QPushButton("💾 Salvar Relatório Automaticamente")
         self.auto_report_button.clicked.connect(self.export_report_auto)
+
+        btn_style = """
+            QPushButton {
+                background-color: #0284C7;
+                color: white;
+                border: 1px solid #0369A1;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #0369A1; }
+            QPushButton:pressed { background-color: #075985; }
+            QPushButton:disabled { background-color: #CBD5E1; color: #64748B; border: 1px solid #94A3B8; }
+        """
+        for b in [self.test_button, self.image_button, self.view_button, self.plan_button, self.manager_button, self.report_button, self.auto_report_button]:
+            b.setStyleSheet(btn_style)
 
         layout.addWidget(QLabel("Resultado do Teste:"))
         layout.addWidget(self.output)
@@ -355,6 +373,88 @@ if __name__ == "__main__":
     
     # Aplica estilo global
     app.setStyle("Fusion")
+
+    # Define paleta limpa e com alto contraste (evita texto branco em áreas claras no Windows)
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#F8FAFC"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#1E293B"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#F1F5F9"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#1E293B"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#F8FAFC"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#1E293B"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#0284C7"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#EF4444"))
+    palette.setColor(QPalette.ColorRole.Link, QColor("#0284C7"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#0284C7"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
+    app.setPalette(palette)
+
+    # Stylesheet global para garantir que todos os botões e campos em áreas claras tenham alta visibilidade
+    app.setStyleSheet("""
+        QWidget {
+            font-family: "Segoe UI", Arial, sans-serif;
+            color: #1E293B;
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit {
+            color: #1E293B;
+            background-color: #FFFFFF;
+            border: 1.5px solid #CBD5E1;
+            border-radius: 6px;
+            padding: 6px 10px;
+            selection-background-color: #0284C7;
+            selection-color: #FFFFFF;
+        }
+        QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+            border-color: #0284C7;
+            background-color: #F8FAFC;
+            color: #1E293B;
+        }
+        QLineEdit::placeholder, QTextEdit::placeholder {
+            color: #94A3B8;
+        }
+        QPushButton {
+            background-color: #0284C7;
+            color: #FFFFFF;
+            border: 1px solid #0369A1;
+            border-radius: 6px;
+            padding: 7px 16px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #0369A1;
+        }
+        QPushButton:pressed {
+            background-color: #075985;
+        }
+        QPushButton:disabled {
+            background-color: #CBD5E1;
+            color: #64748B;
+            border: 1px solid #94A3B8;
+        }
+        QComboBox {
+            color: #1E293B;
+            background-color: #FFFFFF;
+            border: 1.5px solid #CBD5E1;
+            border-radius: 6px;
+            padding: 6px 10px;
+        }
+        QComboBox QAbstractItemView {
+            color: #1E293B;
+            background-color: #FFFFFF;
+            selection-background-color: #0284C7;
+            selection-color: #FFFFFF;
+        }
+        QCheckBox {
+            color: #1E293B;
+        }
+        QTableWidget, QListWidget {
+            color: #1E293B;
+            background-color: #FFFFFF;
+        }
+    """)
 
     # Inicializa banco e sessão para login
     engine = create_engine(DATABASE_URL)

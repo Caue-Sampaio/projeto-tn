@@ -28,6 +28,8 @@ from db.models import BoardUnit
 from engine.pdf_report import export_test_report
 from engine.runner import run_test
 from ui.plan_manager import PlanManager
+from ui.image_marker import ImageMarker
+from ui.plan_editor import PlanEditor
 
 
 logger = logging.getLogger(__name__)
@@ -323,9 +325,25 @@ class TestExecutor(QWidget):
         layout.addWidget(plan_box)
 
         # Ação principal
-        exec_caption = QLabel("EXECUÇÃO")
+        exec_caption = QLabel("PREPARAÇÃO & EXECUÇÃO")
         exec_caption.setObjectName("caption")
         layout.addWidget(exec_caption)
+
+        self.btn_map_points = QPushButton("📍 Mapear / Editar Pontos")
+        self.btn_map_points.setObjectName("secondaryButton")
+        self.btn_map_points.setFixedHeight(40)
+        self.btn_map_points.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_map_points.setToolTip("Abre o editor visual de pontos da placa.")
+        self.btn_map_points.clicked.connect(self.open_image_marker_edit)
+        layout.addWidget(self.btn_map_points)
+
+        self.btn_plan_editor = QPushButton("📋 Criar / Editar Plano")
+        self.btn_plan_editor.setObjectName("secondaryButton")
+        self.btn_plan_editor.setFixedHeight(40)
+        self.btn_plan_editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_plan_editor.setToolTip("Abre o editor de planos de teste.")
+        self.btn_plan_editor.clicked.connect(self.open_plan_editor)
+        layout.addWidget(self.btn_plan_editor)
 
         self.btn_start_test = QPushButton("▶  INICIAR TESTE")
         self.btn_start_test.setObjectName("primaryButton")
@@ -911,6 +929,8 @@ class TestExecutor(QWidget):
         self.btn_select_plan.setEnabled(enabled)
         self.btn_start_test.setEnabled(enabled)
         self.btn_export_report.setEnabled(enabled)
+        self.btn_map_points.setEnabled(enabled)
+        self.btn_plan_editor.setEnabled(enabled)
 
     def check_can_start(self):
         self.update_button_state()
@@ -998,6 +1018,8 @@ class TestExecutor(QWidget):
         self.btn_select_plan.setEnabled(enabled)
         self.btn_start_test.setEnabled(enabled)
         self.btn_export_report.setEnabled(enabled)
+        self.btn_map_points.setEnabled(enabled)
+        self.btn_plan_editor.setEnabled(enabled)
 
     def update_progress(self, current, total, description):
         progress = int((current / total) * 100) if total else 0
@@ -1135,3 +1157,64 @@ class TestExecutor(QWidget):
             )
             return None
         return selected
+
+    # ==========================================================
+    # EDITORES (MAPEAMENTO E PLANO)
+    # ==========================================================
+
+    def open_image_marker_edit(self):
+        if not self.selected_board:
+            QMessageBox.warning(self, "Aviso", "Selecione uma placa antes de mapear pontos.")
+            return
+
+        if not self.selected_board.images:
+            QMessageBox.warning(self, "Aviso", "A placa não possui imagens cadastradas. Cadastre uma imagem primeiro.")
+            return
+
+        paths = [image.path for image in self.selected_board.images]
+        if len(paths) == 1:
+            selected = paths[0]
+        else:
+            selected, ok = QInputDialog.getItem(
+                self,
+                "Selecionar Imagem",
+                "Escolha a imagem para mapeamento:",
+                paths,
+                0,
+                False,
+            )
+            if not ok or not selected:
+                return
+
+        if not Path(selected).exists():
+            QMessageBox.warning(
+                self,
+                "Imagem não encontrada",
+                f"O arquivo de imagem não existe no caminho cadastrado:\n{selected}",
+            )
+            return
+
+        self.marker_window = ImageMarker(
+            session=self.session,
+            board=self.selected_board,
+            mode="edit",
+            instruments=self.instruments
+        )
+        self.marker_window.load_image(selected)
+        self.marker_window.show()
+        self.marker_window.raise_()
+        self.marker_window.activateWindow()
+
+    def open_plan_editor(self):
+        if not self.selected_board:
+            QMessageBox.warning(self, "Aviso", "Selecione uma placa antes de editar o plano.")
+            return
+
+        self.editor_window = PlanEditor(
+            self.session,
+            self.selected_board
+        )
+        self.editor_window.show()
+        self.editor_window.raise_()
+        self.editor_window.activateWindow()
+

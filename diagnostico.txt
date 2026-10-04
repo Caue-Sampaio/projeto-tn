@@ -1,0 +1,33 @@
+=== DIAGNÓSTICO DE IMAGENS ===
+Python: 3.14.8
+Pasta do projeto: C:\Users\manic\Documents\projeto-tn
+
+[1] Arquivos corrigidos instalados?
+  OK      utils/image_paths.py
+  ANTIGO  ui/placa_tab.py  <- ainda é a versão antiga, não foi substituído
+  ANTIGO  ui/test_executor.py  <- ainda é a versão antiga, não foi substituído
+
+[2] PyQt6
+  PyQt6 6.9.1 | formatos: bmp, cur, gif, icns, ico, jfif, jpeg, jpg, pbm, pdf, pgm, png, ppm, svg, svgz, tga, tif, tiff, wbmp, webp, xbm, xpm
+
+[3] Imagens cadastradas no banco
+  Banco: C:\Users\manic\Documents\projeto-tn\db\teste.db  (existe)
+
+  Imagem #1 | placa: asdfasf (SN 1213123)
+    salvo no banco : C:/Users/leona/OneDrive/Documentos/PROJETO TN ELETROSISTEM 2/placa apc.png
+    existe nesse caminho? False
+    resolvido para : C:\Users\manic\Documents\projeto-tn\placa apc.png
+    Qt consegue abrir? True  (1000x764)
+
+  Imagem #2 | placa: Placa de Teste Principal (SN SN001)
+    salvo no banco : C:/Users/leona/OneDrive/Documentos/PROJETO TN ELETROSISTEM 2/placa_exemplo_2.jpg
+    existe nesse caminho? False
+    resolvido para : C:\Users\manic\Documents\projeto-tn\placa_exemplo_2.jpg
+    Qt consegue abrir? True  (800x537)
+
+  Placa SEM imagem cadastrada: Placa de Desenvolvimento (SN SN002)
+
+[4] Imagens encontradas na pasta do projeto
+  C:\Users\manic\Documents\projeto-tn\placa apc.png
+  C:\Users\manic\Documents\projeto-tn\placa_exemplo.jpg
+  C:\Users\manic\Documents\projeto-tn\placa_exemplo_2.jpg

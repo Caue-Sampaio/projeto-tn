@@ -178,8 +178,12 @@ class MainWindow(QMainWindow):
 
     def setup_content_area(self):
         self.content_area = QWidget()
+        self.content_area.setObjectName("contentArea")
+        # IMPORTANTE: com seletor. Sem ele, o fundo claro era aplicado a TODOS os
+        # widgets filhos (inclusive botões dos diálogos de seleção), deixando o
+        # texto branco dos botões invisível.
         self.content_area.setStyleSheet(
-            "background-color: #F4F7F9;"
+            "QWidget#contentArea { background-color: #F4F7F9; }"
         )
 
         self.content_layout = QVBoxLayout(

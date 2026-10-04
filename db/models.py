@@ -47,6 +47,24 @@ class BoardModel(Base):
         return f"BoardModel(id={self.id}, name='{self.name}', version='{self.version}')"
 
 
+class Machine(Base):
+    """Máquina/equipamento que agrupa as placas que ela possui."""
+    __tablename__ = "machines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Sem cascade de exclusão: apagar a máquina NÃO apaga as placas (elas ficam "sem máquina")
+    boards: Mapped[List["BoardUnit"]] = relationship("BoardUnit", back_populates="machine")
+
+    def __repr__(self):
+        return f"Machine(id={self.id}, name='{self.name}')"
+
+
 class BoardUnit(Base):
     __tablename__ = "board_units"
 
@@ -64,8 +82,10 @@ class BoardUnit(Base):
 
     model_id: Mapped[int] = mapped_column(ForeignKey("board_models.id"))
     operator_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    machine_id: Mapped[Optional[int]] = mapped_column(ForeignKey("machines.id"), nullable=True)
 
     board_model: Mapped["BoardModel"] = relationship("BoardModel", back_populates="boards")
+    machine: Mapped[Optional["Machine"]] = relationship("Machine", back_populates="boards")
     operator: Mapped["User"] = relationship("User", back_populates="boards")
 
     images: Mapped[List["BoardImage"]] = relationship("BoardImage", back_populates="board", cascade="all, delete-orphan")

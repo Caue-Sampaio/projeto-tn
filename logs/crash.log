@@ -1,0 +1,13 @@
+
+--- 2026-10-04 17:10:32
+Traceback (most recent call last):
+  File "c:\Users\manic\Documents\projeto-tn\ui\image_marker.py", line 1835, in <lambda>
+    QTimer.singleShot(4000, lambda: self.status_label.setStyleSheet(f"""
+                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+        color: {Theme.TEXT_MUTED}; font-size: 10px;
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        background: transparent;
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    """))
+    ^^^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted

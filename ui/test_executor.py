@@ -6,17 +6,23 @@ from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QInputDialog,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -24,10 +30,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from db.models import BoardUnit
+from db.models import BoardUnit, Machine
 from engine.pdf_report import export_test_report
 from engine.runner import run_test
 from ui.plan_manager import PlanManager
+from utils.image_paths import resolve_image_path, heal_board_images, import_image_to_project
 from ui.image_marker import ImageMarker
 from ui.plan_editor import PlanEditor
 
@@ -64,7 +71,7 @@ class BoardPreview(QFrame):
         self._point = None
         self._refdes = ""
         self.setObjectName("boardPreview")
-        self.setMinimumSize(360, 300)
+        self.setMinimumSize(300, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def load_image(self, image_path):
@@ -143,6 +150,209 @@ class BoardPreview(QFrame):
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, self._refdes)
 
 
+class BoardSelectDialog(QDialog):
+    """Seleção em 2 passos: primeiro a MÁQUINA, depois a PLACA dela."""
+
+    NO_MACHINE = "sem_maquina"
+
+    def __init__(self, session, parent=None, current_board=None):
+        super().__init__(parent)
+        self.session = session
+        self.selected_board = None
+
+        self.setWindowTitle("Selecionar Placa")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+
+        boards = (
+            session.query(BoardUnit)
+            .filter_by(is_active=True)
+            .order_by(BoardUnit.name)
+            .all()
+        )
+        self._boards_by_machine = {}
+        for board in boards:
+            key = board.machine_id if board.machine_id is not None else self.NO_MACHINE
+            self._boards_by_machine.setdefault(key, []).append(board)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Cabeçalho
+        header = QFrame()
+        header.setObjectName("selHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(24, 18, 24, 18)
+        header_layout.setSpacing(2)
+        title = QLabel("🔌  Selecionar placa para teste")
+        title.setObjectName("selTitle")
+        subtitle = QLabel("1. Escolha a máquina     2. Escolha a placa dela")
+        subtitle.setObjectName("selSubtitle")
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        root.addWidget(header)
+
+        # Corpo
+        body = QFrame()
+        body.setObjectName("selBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(24, 20, 24, 12)
+        body_layout.setSpacing(6)
+
+        machine_label = QLabel("MÁQUINA")
+        machine_label.setObjectName("selFieldLabel")
+        self.machine_combo = QComboBox()
+        self.machine_combo.setMinimumHeight(38)
+
+        machines = session.query(Machine).order_by(Machine.name).all()
+        for machine in machines:
+            count = len(self._boards_by_machine.get(machine.id, []))
+            code = f" [{machine.code}]" if machine.code else ""
+            self.machine_combo.addItem(f"{machine.name}{code}  —  {count} placa(s) ativa(s)", machine.id)
+        if self.NO_MACHINE in self._boards_by_machine:
+            count = len(self._boards_by_machine[self.NO_MACHINE])
+            self.machine_combo.addItem(f"Sem máquina  —  {count} placa(s) ativa(s)", self.NO_MACHINE)
+
+        board_label = QLabel("PLACA")
+        board_label.setObjectName("selFieldLabel")
+        self.board_list = QListWidget()
+        self.board_list.setMinimumHeight(190)
+        self.board_list.itemDoubleClicked.connect(lambda _item: self._confirm())
+        self.board_list.itemSelectionChanged.connect(self._update_ok_state)
+
+        self.info_label = QLabel("")
+        self.info_label.setObjectName("selInfo")
+
+        body_layout.addWidget(machine_label)
+        body_layout.addWidget(self.machine_combo)
+        body_layout.addSpacing(8)
+        body_layout.addWidget(board_label)
+        body_layout.addWidget(self.board_list, 1)
+        body_layout.addWidget(self.info_label)
+        root.addWidget(body, 1)
+
+        # Rodapé
+        footer = QFrame()
+        footer.setObjectName("selFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(24, 14, 24, 18)
+        footer_layout.addStretch()
+
+        self.btn_cancel = QPushButton("Cancelar")
+        self.btn_cancel.setObjectName("selCancel")
+        self.btn_cancel.setMinimumSize(110, 38)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_ok = QPushButton("Selecionar placa")
+        self.btn_ok.setObjectName("selOk")
+        self.btn_ok.setMinimumSize(150, 38)
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self._confirm)
+
+        footer_layout.addWidget(self.btn_cancel)
+        footer_layout.addWidget(self.btn_ok)
+        root.addWidget(footer)
+
+        self._apply_styles()
+        self.machine_combo.currentIndexChanged.connect(self._fill_boards)
+
+        # Começa na máquina/placa que já estava selecionada
+        if current_board is not None:
+            key = current_board.machine_id if current_board.machine_id is not None else self.NO_MACHINE
+            index = self.machine_combo.findData(key)
+            if index >= 0:
+                self.machine_combo.setCurrentIndex(index)
+        self._fill_boards()
+        if current_board is not None:
+            for row in range(self.board_list.count()):
+                if self.board_list.item(row).data(Qt.ItemDataRole.UserRole) == current_board.id:
+                    self.board_list.setCurrentRow(row)
+                    break
+
+    def _fill_boards(self):
+        self.board_list.clear()
+        key = self.machine_combo.currentData()
+        boards = self._boards_by_machine.get(key, [])
+        for board in boards:
+            item = QListWidgetItem(
+                f"{board.name}   —   {board.model} v{board.version}   •   SN: {board.serial_number}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, board.id)
+            self.board_list.addItem(item)
+
+        if boards:
+            self.board_list.setCurrentRow(0)
+            self.info_label.setText(f"{len(boards)} placa(s) ativa(s) nesta máquina")
+        else:
+            self.info_label.setText("Nenhuma placa ativa nesta máquina.")
+        self._update_ok_state()
+
+    def _update_ok_state(self):
+        self.btn_ok.setEnabled(self.board_list.currentItem() is not None)
+
+    def _confirm(self):
+        item = self.board_list.currentItem()
+        if item is None:
+            return
+        self.selected_board = self.session.get(BoardUnit, item.data(Qt.ItemDataRole.UserRole))
+        if self.selected_board is not None:
+            self.accept()
+
+    def _apply_styles(self):
+        # Cores explícitas: o diálogo não depende do estilo de nenhuma tela por trás
+        self.setStyleSheet("""
+            QDialog { background: #FFFFFF; }
+            QFrame#selHeader {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                            stop:0 #0F766E, stop:1 #0284C7);
+            }
+            QLabel#selTitle {
+                color: #FFFFFF; font-size: 18px; font-weight: 700; background: transparent;
+            }
+            QLabel#selSubtitle { color: #E0F2FE; font-size: 12px; background: transparent; }
+            QFrame#selBody { background: #FFFFFF; }
+            QFrame#selFooter { background: #F8FAFC; border-top: 1px solid #E2E8F0; }
+            QLabel#selFieldLabel {
+                color: #475569; font-size: 11px; font-weight: 700; background: transparent;
+            }
+            QLabel#selInfo { color: #64748B; font-size: 12px; background: transparent; }
+            QComboBox {
+                background: #FFFFFF; color: #0F172A;
+                border: 1.5px solid #CBD5E1; border-radius: 8px;
+                padding: 6px 12px; font-size: 13px;
+            }
+            QComboBox:focus { border: 1.5px solid #0284C7; }
+            QComboBox QAbstractItemView {
+                background: #FFFFFF; color: #0F172A;
+                selection-background-color: #0284C7; selection-color: #FFFFFF;
+            }
+            QListWidget {
+                background: #FFFFFF; color: #0F172A;
+                border: 1.5px solid #CBD5E1; border-radius: 8px;
+                font-size: 13px; outline: 0;
+            }
+            QListWidget::item { padding: 10px 12px; border-bottom: 1px solid #F1F5F9; }
+            QListWidget::item:selected { background: #0284C7; color: #FFFFFF; }
+            QListWidget::item:hover:!selected { background: #E0F2FE; color: #0F172A; }
+            QPushButton#selCancel {
+                background: #FFFFFF; color: #334155;
+                border: 1.5px solid #CBD5E1; border-radius: 8px;
+                padding: 8px 18px; font-weight: 600; font-size: 13px;
+            }
+            QPushButton#selCancel:hover { background: #F1F5F9; }
+            QPushButton#selOk {
+                background: #0F766E; color: #FFFFFF;
+                border: 1px solid #0D9488; border-radius: 8px;
+                padding: 8px 20px; font-weight: 700; font-size: 13px;
+            }
+            QPushButton#selOk:hover { background: #0D9488; }
+            QPushButton#selOk:disabled {
+                background: #E2E8F0; color: #94A3B8; border: 1px solid #CBD5E1;
+            }
+        """)
+
+
 class TestExecutor(QWidget):
     """
     Aba TESTE GERAL.
@@ -160,6 +370,8 @@ class TestExecutor(QWidget):
         self.selected_plan = None
         self.last_run = None
         self.plan_manager_window = None
+        self.marker_page = None
+        self.marker_widget = None
         self.is_test_running = False
 
         self.instruments = {
@@ -177,12 +389,21 @@ class TestExecutor(QWidget):
     # ==========================================================
 
     def setup_ui(self):
-        self.setObjectName("testGeneralRoot")
-        self.apply_styles()
+        # Pilha: página 0 = tela de testes | página 1 = editor de pontos (embutido)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.stack = QStackedWidget()
+        outer.addWidget(self.stack)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(14)
+        # O estilo escuro vale só para a página de testes (não "vaza" para o editor)
+        self.test_page = QWidget()
+        self.test_page.setObjectName("testGeneralRoot")
+        self.apply_styles(self.test_page)
+
+        root = QVBoxLayout(self.test_page)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
 
         # Cabeçalho
         header = QFrame()
@@ -249,22 +470,52 @@ class TestExecutor(QWidget):
         self.log_text = QTextEdit()
         self.log_text.setObjectName("logText")
         self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(120)
-        self.log_text.setMaximumHeight(175)
+        self.log_text.setMinimumHeight(90)
+        self.log_text.setMaximumHeight(130)
 
         log_layout.addLayout(log_header)
         log_layout.addWidget(self.log_text)
         root.addWidget(log_card)
 
+        # Área rolável: em janelas pequenas aparece barra de rolagem
+        # em vez de botões ficarem sobrepostos.
+        self.test_scroll = QScrollArea()
+        self.test_scroll.setObjectName("testScroll")
+        self.test_scroll.setWidgetResizable(True)
+        self.test_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.test_scroll.setStyleSheet(
+            """
+            QScrollArea#testScroll { background: #0B1220; border: none; }
+            QScrollArea#testScroll QScrollBar:vertical {
+                background: #0B1220; width: 10px; margin: 0px; border: none;
+            }
+            QScrollArea#testScroll QScrollBar::handle:vertical {
+                background: #334155; min-height: 24px; border-radius: 5px;
+            }
+            QScrollArea#testScroll QScrollBar:horizontal {
+                background: #0B1220; height: 10px; margin: 0px; border: none;
+            }
+            QScrollArea#testScroll QScrollBar::handle:horizontal {
+                background: #334155; min-width: 24px; border-radius: 5px;
+            }
+            QScrollArea#testScroll QScrollBar::add-line:vertical,
+            QScrollArea#testScroll QScrollBar::sub-line:vertical { height: 0px; }
+            QScrollArea#testScroll QScrollBar::add-line:horizontal,
+            QScrollArea#testScroll QScrollBar::sub-line:horizontal { width: 0px; }
+            """
+        )
+        self.test_scroll.setWidget(self.test_page)
+        self.stack.addWidget(self.test_scroll)
+
     def build_control_panel(self):
         panel = QFrame()
         panel.setObjectName("panelCard")
-        panel.setMinimumWidth(265)
+        panel.setMinimumWidth(250)
         panel.setMaximumWidth(340)
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
 
         title = QLabel("PAINEL DE CONTROLE")
         title.setObjectName("sectionTitle")
@@ -284,7 +535,8 @@ class TestExecutor(QWidget):
         self.lbl_board.setWordWrap(True)
         self.lbl_board_sn = QLabel("SN: —")
         self.lbl_board_sn.setObjectName("mutedText")
-        self.btn_select_board = QPushButton("Selecionar placa")
+        self.lbl_board_sn.setWordWrap(True)
+        self.btn_select_board = QPushButton("Selecionar maquina/placa")
         self.btn_select_board.setObjectName("secondaryButton")
         self.btn_select_board.setFixedHeight(40)
         self.btn_select_board.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -364,8 +616,9 @@ class TestExecutor(QWidget):
 
         layout.addStretch()
 
-        hint = QLabel("ATALHOS\nEspaço  • iniciar teste\nCtrl+L  • limpar log")
+        hint = QLabel("Espaço: iniciar teste  •  Ctrl+L: limpar log")
         hint.setObjectName("shortcutHint")
+        hint.setWordWrap(True)
         layout.addWidget(hint)
 
         return panel
@@ -406,7 +659,7 @@ class TestExecutor(QWidget):
     def build_results_panel(self):
         panel = QFrame()
         panel.setObjectName("panelCard")
-        panel.setMinimumWidth(360)
+        panel.setMinimumWidth(330)
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -463,8 +716,8 @@ class TestExecutor(QWidget):
         layout.addWidget(progress_box)
         return panel
 
-    def apply_styles(self):
-        self.setStyleSheet(
+    def apply_styles(self, target=None):
+        (target or self).setStyleSheet(
             """
             QWidget#testGeneralRoot {
                 background: #0B1220;
@@ -733,15 +986,20 @@ class TestExecutor(QWidget):
         self.shortcut_start = QShortcut(QKeySequence("Space"), self)
         self.shortcut_start.activated.connect(self._shortcut_start)
         self.shortcut_clear = QShortcut(QKeySequence("Ctrl+L"), self)
-        self.shortcut_clear.activated.connect(self.clear_log)
+        self.shortcut_clear.activated.connect(self._shortcut_clear)
 
     # ==========================================================
     # ESTADO / LOG
     # ==========================================================
 
+    def _shortcut_clear(self):
+        if self.stack.currentWidget() is self.test_scroll:
+            self.clear_log()
+
     def _shortcut_start(self):
         if (
-            not self.is_test_running
+            self.stack.currentWidget() is self.test_scroll
+            and not self.is_test_running
             and self.selected_board is not None
             and self.selected_plan is not None
         ):
@@ -804,6 +1062,7 @@ class TestExecutor(QWidget):
         self.log(f"📦 Placa carregada: {board.name} (SN: {board.serial_number})")
 
     def _set_board(self, board):
+        self._close_marker_inline(refresh=False)
         self.selected_board = board
 
         if (
@@ -816,7 +1075,8 @@ class TestExecutor(QWidget):
             self.results_table.setRowCount(0)
 
         self.lbl_board.setText(board.name)
-        self.lbl_board_sn.setText(f"SN: {board.serial_number}")
+        machine_text = f"  •  Máquina: {board.machine.name}" if board.machine else ""
+        self.lbl_board_sn.setText(f"SN: {board.serial_number}{machine_text}")
         self.load_board_preview()
         self.update_button_state()
 
@@ -828,39 +1088,56 @@ class TestExecutor(QWidget):
         if self.selected_board is None or not self.selected_board.images:
             return
 
+        # Regrava os caminhos como absolutos (quando o arquivo é encontrado)
+        missing = heal_board_images(self.session, self.selected_board)
+
         for image in self.selected_board.images:
-            if Path(image.path).exists():
+            if image not in missing:
                 self.board_preview.load_image(image.path)
                 self.preview_meta.setText(Path(image.path).name)
                 return
 
+        # Nenhuma imagem encontrada: pede para o usuário apontar o arquivo
         self.preview_meta.setText("Imagem cadastrada não encontrada")
+        self._relocate_missing_image(missing[0])
+
+    def _relocate_missing_image(self, image):
+        resp = QMessageBox.question(
+            self,
+            "Imagem não encontrada",
+            f"Não achei o arquivo da imagem cadastrada:\n{image.path}\n\n"
+            "Deseja localizar a imagem agora?",
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Localizar imagem da placa",
+            "",
+            "Imagens (*.png *.jpg *.jpeg *.bmp *.gif)",
+        )
+        if not path:
+            return
+
+        image.path = import_image_to_project(path)
+        self.session.commit()
+        self.load_board_preview()
 
     def select_board(self):
-        boards = self.session.query(BoardUnit).filter_by(is_active=True).all()
-        if not boards:
+        has_boards = self.session.query(BoardUnit).filter_by(is_active=True).first() is not None
+        if not has_boards:
             QMessageBox.warning(self, "Aviso", "Nenhuma placa ativa cadastrada.")
             return
 
-        items = [f"{board.serial_number} - {board.name}" for board in boards]
-        item, ok = QInputDialog.getItem(
-            self, "Selecionar Placa", "Escolha a placa:", items, 0, False
-        )
-        if not ok or not item:
+        dialog = BoardSelectDialog(self.session, self, self.selected_board)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.selected_board is None:
             return
 
-        serial_number = item.split(" - ", 1)[0]
-        board = (
-            self.session.query(BoardUnit)
-            .filter_by(serial_number=serial_number)
-            .first()
-        )
-        if board is None:
-            QMessageBox.warning(self, "Erro", "A placa selecionada não foi encontrada.")
-            return
-
+        board = dialog.selected_board
         self._set_board(board)
-        self.log(f"🔌 Placa selecionada: {board.name} (SN: {board.serial_number})")
+        machine = f" | Máquina: {board.machine.name}" if board.machine else ""
+        self.log(f"🔌 Placa selecionada: {board.name} (SN: {board.serial_number}){machine}")
 
     def select_plan(self):
         if not self.selected_board:
@@ -1149,14 +1426,15 @@ class TestExecutor(QWidget):
             if not ok or not selected:
                 return None
 
-        if not Path(selected).exists():
+        real_path = resolve_image_path(selected)
+        if not real_path:
             QMessageBox.warning(
                 self,
                 "Imagem não encontrada",
                 f"O arquivo de imagem não existe no caminho cadastrado:\n{selected}",
             )
             return None
-        return selected
+        return real_path
 
     # ==========================================================
     # EDITORES (MAPEAMENTO E PLANO)
@@ -1186,24 +1464,111 @@ class TestExecutor(QWidget):
             if not ok or not selected:
                 return
 
-        if not Path(selected).exists():
+        real_path = resolve_image_path(selected)
+        if not real_path:
             QMessageBox.warning(
                 self,
                 "Imagem não encontrada",
                 f"O arquivo de imagem não existe no caminho cadastrado:\n{selected}",
             )
             return
+        selected = real_path
 
-        self.marker_window = ImageMarker(
+        self._open_marker_inline(selected)
+
+    def _open_marker_inline(self, image_path):
+        """Abre o mapeamento de pontos DENTRO desta aba (sem janela extra)."""
+        self._close_marker_inline(refresh=False)
+
+        marker = ImageMarker(
             session=self.session,
             board=self.selected_board,
             mode="edit",
-            instruments=self.instruments
+            instruments=self.instruments,
         )
-        self.marker_window.load_image(selected)
-        self.marker_window.show()
-        self.marker_window.raise_()
-        self.marker_window.activateWindow()
+        marker.setMinimumSize(900, 560)  # o original exigia 1200x750 (janela própria)
+        marker.load_image(image_path)
+        self.marker_widget = marker
+
+        page = QWidget()
+        page.setObjectName("markerPage")
+        page.setStyleSheet(
+            """
+            QWidget#markerPage { background: #0B1220; }
+            QFrame#markerBar {
+                background: #111827;
+                border-bottom: 1px solid #243044;
+            }
+            QLabel#markerTitle {
+                background: transparent;
+                color: #F8FAFC;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton#markerBack {
+                background: #172033;
+                color: #E2E8F0;
+                border: 1px solid #334155;
+                border-radius: 7px;
+                padding: 0px 14px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton#markerBack:hover {
+                color: #F8FAFC;
+                border: 1px solid #22D3EE;
+            }
+            """
+        )
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        bar = QFrame()
+        bar.setObjectName("markerBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(12, 8, 12, 8)
+
+        btn_back = QPushButton("←  Voltar aos testes")
+        btn_back.setObjectName("markerBack")
+        btn_back.setFixedHeight(34)
+        btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_back.clicked.connect(lambda _checked=False: self._close_marker_inline())
+
+        title = QLabel(
+            f"📍 Mapeamento de pontos — {self.selected_board.name} "
+            f"(SN: {self.selected_board.serial_number})"
+        )
+        title.setObjectName("markerTitle")
+
+        bar_layout.addWidget(btn_back)
+        bar_layout.addSpacing(12)
+        bar_layout.addWidget(title)
+        bar_layout.addStretch()
+
+        page_layout.addWidget(bar)
+        page_layout.addWidget(marker, 1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+
+        self.marker_page = scroll
+        self.stack.addWidget(scroll)
+        self.stack.setCurrentWidget(scroll)
+
+    def _close_marker_inline(self, refresh=True):
+        """Volta para a tela de testes e descarta o editor de pontos."""
+        page = self.marker_page
+        self.stack.setCurrentWidget(self.test_scroll)
+        if page is not None:
+            self.stack.removeWidget(page)
+            page.deleteLater()
+        self.marker_page = None
+        self.marker_widget = None
+        if refresh and self.selected_board is not None:
+            self.load_board_preview()
 
     def open_plan_editor(self):
         if not self.selected_board:
@@ -1217,4 +1582,3 @@ class TestExecutor(QWidget):
         self.editor_window.show()
         self.editor_window.raise_()
         self.editor_window.activateWindow()
-

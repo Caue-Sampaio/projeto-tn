@@ -368,8 +368,41 @@ class TestApp(QWidget):
             self.marker.image_label.update()
 
 
+def _install_excepthook():
+    """Evita que um erro dentro de um botão/clique feche o programa inteiro.
+
+    No PyQt6, uma exceção não tratada num slot derruba a aplicação. Aqui o erro
+    é gravado em logs/crash.log e mostrado numa janela, e o programa continua.
+    """
+    import traceback
+    from datetime import datetime
+
+    def handler(exc_type, exc, tb):
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        try:
+            os.makedirs("logs", exist_ok=True)
+            with open(os.path.join("logs", "crash.log"), "a", encoding="utf-8") as f:
+                f.write(f"\n--- {datetime.now():%Y-%m-%d %H:%M:%S}\n{text}")
+        except Exception:
+            pass
+        print(text, file=sys.stderr)
+        try:
+            box = QMessageBox()
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setWindowTitle("Erro inesperado")
+            box.setText("Ocorreu um erro, mas o programa continua aberto.\n"
+                        "Os detalhes foram salvos em logs/crash.log.")
+            box.setDetailedText(text)
+            box.exec()
+        except Exception:
+            pass
+
+    sys.excepthook = handler
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    _install_excepthook()
     
     # Aplica estilo global
     app.setStyle("Fusion")
@@ -459,6 +492,8 @@ if __name__ == "__main__":
     # Inicializa banco e sessão para login
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(engine)
+    from db.auto_migrate import ensure_schema
+    ensure_schema(engine)  # adiciona a coluna machine_id em bancos antigos
     session = Session(engine)
 
     # Tela de login

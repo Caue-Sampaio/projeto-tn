@@ -3,3 +3,6 @@ PyQt6==6.9.1
 reportlab==4.4.4
 schedule==1.2.2
 bcrypt==5.0.0
+pyvisa>=1.14
+pyvisa-py>=0.7
+pyusb>=1.2.1

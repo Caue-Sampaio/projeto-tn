@@ -10,8 +10,8 @@ from PyQt6.QtWidgets import (
     QComboBox, QSlider, QDialog, QDialogButtonBox, QSplitter, QFrame,
     QTabWidget, QMenu, QTableWidget, QTableWidgetItem, QHeaderView,
     QSpinBox, QInputDialog, QGraphicsDropShadowEffect, QGroupBox,
-    QProgressBar, QListWidget, QListWidgetItem, QSizePolicy,
-    QGraphicsRectItem
+    QProgressBar, QListWidget, QListWidgetItem, QSizePolicy, QScrollArea,
+    QGraphicsRectItem, QColorDialog, QApplication
 )
 from PyQt6.QtGui import (
     QPixmap, QColor, QPen, QBrush, QWheelEvent, QFont, QPainter,
@@ -21,8 +21,10 @@ from PyQt6.QtCore import (
     Qt, pyqtSignal, QPointF, QRectF, QTimer, QPropertyAnimation,
     QEasingCurve
 )
-from db.models import TestPoint, BoardUnit, Measurement
+from db.models import TestPoint, BoardUnit, Measurement, OscilloscopeCapture
 from sqlalchemy.orm import Session
+from ui.oscilloscope_panel import OscilloscopePanel
+from oscilloscope.base import OscilloscopeReading
 import logging
 import os
 from datetime import datetime
@@ -67,6 +69,10 @@ class Theme:
     ALERT_AMBER    = "#F59E0B"
     ERROR_RED      = "#EF4444"
 
+    # Todo ponto novo nasce vermelho; a escolha individual fica persistida no DB.
+    DEFAULT_POINT_COLOR = "#E53935"
+
+    # Mantido apenas para rótulo/tipagem visual; a cor real vem de marker_color.
     # Type -> color mapping for test points
     POINT_COLORS = {
         "VCC":    "#22C55E",
@@ -124,8 +130,8 @@ class TestPointItem(QGraphicsEllipseItem):
         self.base_size = base_size
         self._selected = False
 
-        # Determine color from type/refdes
-        color_hex = Theme.point_color(tp.refdes, tp.expected_voltage_v)
+        # Cor persistida por ponto. Nunca gera cor aleatória/tipificada.
+        color_hex = getattr(tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
         self._color = QColor(color_hex)
         self._color_hover = QColor(color_hex)
         self._color_hover.setAlpha(255)
@@ -151,13 +157,25 @@ class TestPointItem(QGraphicsEllipseItem):
         # Position
         self.setPos(tp.x, tp.y)
 
-        # Rich tooltip
-        tooltip_lines = [f"{tp.refdes}"]
-        if tp.expected_voltage_v is not None:
-            tooltip_lines.append(f"Tensao: {tp.expected_voltage_v:.2f} V")
-        if tp.tolerance_voltage_v is not None:
-            tooltip_lines.append(f"Tolerancia: +/-{tp.tolerance_voltage_v:.2f} V")
-        tooltip_lines.append(f"Pos: ({tp.x}, {tp.y})")
+        self.update_tooltip()
+
+    def update_tooltip(self):
+        tooltip_lines = [f"{self.tp.refdes}"]
+        if self.tp.expected_voltage_v is not None:
+            tooltip_lines.append(f"Esperado: {self.tp.expected_voltage_v:.4g} V")
+        if getattr(self.tp, "last_scope_vpp_v", None) is not None:
+            ch = getattr(self.tp, "last_scope_channel", None)
+            prefix = f"CH{ch} • " if ch else ""
+            tooltip_lines.append(f"Osciloscópio: {prefix}{self.tp.last_scope_vpp_v:.6g} Vpp")
+            freq = getattr(self.tp, "last_scope_frequency_hz", None)
+            if freq is not None:
+                tooltip_lines.append(f"Frequência: {freq:.6g} Hz")
+            captured_at = getattr(self.tp, "last_scope_at", None)
+            if captured_at is not None:
+                tooltip_lines.append(f"Capturada: {captured_at.strftime('%d/%m/%Y %H:%M:%S')}")
+        if self.tp.tolerance_voltage_v is not None:
+            tooltip_lines.append(f"Tolerância: +/-{self.tp.tolerance_voltage_v:.4g} V")
+        tooltip_lines.append(f"Pos: ({self.tp.x}, {self.tp.y})")
         self.setToolTip("\n".join(tooltip_lines))
 
     def update_label_position(self):
@@ -734,21 +752,45 @@ class ImageMarker(QWidget):
 
         layout.addWidget(header)
 
+        # ── Osciloscópio Rigol MSO5074 ──
+        # Painel compacto/colapsável. Toda comunicação VISA ocorre fora da thread da GUI.
+        self.oscilloscope_panel = OscilloscopePanel(Theme, self)
+        self.oscilloscope_panel.capture_requested.connect(self._persist_oscilloscope_reading)
+        self.oscilloscope_panel.status_changed.connect(self.show_status)
+        layout.addWidget(self.oscilloscope_panel)
+        layout.addSpacing(8)
+
         # ── Splitter for table + form ──
         inner_splitter = QSplitter(Qt.Orientation.Vertical)
         inner_splitter.setChildrenCollapsible(False)
 
         # Points table
+        # Mantém uma área mínima estável para a lista; o splitter não pode
+        # esmagar a tabela quando o painel do osciloscópio estiver expandido.
         table_card = self._build_points_table()
+        table_card.setMinimumHeight(180)
         inner_splitter.addWidget(table_card)
 
         # Edit form
+        # O formulário possui muitas linhas. Em resoluções menores (ou com o
+        # osciloscópio expandido), comprimi-lo causava campos cortados/sobrepostos.
+        # Agora ele rola verticalmente em vez de deformar o layout.
         form_card = self._build_edit_form()
-        inner_splitter.addWidget(form_card)
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setObjectName("formScroll")
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.form_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.form_scroll.setMinimumHeight(250)
+        self.form_scroll.setWidget(form_card)
+        inner_splitter.addWidget(self.form_scroll)
 
-        inner_splitter.setSizes([320, 380])
-        inner_splitter.setStretchFactor(0, 4)
-        inner_splitter.setStretchFactor(1, 6)
+        # Distribuição inicial mais equilibrada. O formulário pode rolar, portanto
+        # nunca precisa reduzir a altura dos próprios controles.
+        inner_splitter.setSizes([250, 420])
+        inner_splitter.setStretchFactor(0, 3)
+        inner_splitter.setStretchFactor(1, 7)
 
         layout.addWidget(inner_splitter, 1)
 
@@ -765,9 +807,9 @@ class ImageMarker(QWidget):
         # Table
         self.points_table = QTableWidget()
         self.points_table.setObjectName("pointsTable")
-        self.points_table.setColumnCount(5)
+        self.points_table.setColumnCount(6)
         self.points_table.setHorizontalHeaderLabels([
-            "   ID", "Tipo", "Tensao", "Toler.", "Pos (X,Y)"
+            "   ID", "Tipo", "Esperado", "Osciloscópio", "Toler.", "Pos (X,Y)"
         ])
         self.points_table.verticalHeader().setVisible(False)
         self.points_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -775,13 +817,16 @@ class ImageMarker(QWidget):
         self.points_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.points_table.setAlternatingRowColors(True)
         self.points_table.setShowGrid(False)
+        self.points_table.verticalHeader().setDefaultSectionSize(34)
+        self.points_table.verticalHeader().setMinimumSectionSize(30)
 
         header = self.points_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
 
         self.points_table.itemSelectionChanged.connect(self._on_table_selection_changed)
 
@@ -821,7 +866,9 @@ class ImageMarker(QWidget):
         form_layout = QFormLayout(form)
         form_layout.setSpacing(8)
         form_layout.setContentsMargins(0, 0, 0, 0)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
 
         # RefDes (read-only display)
         self.refdes_label = QLabel("-")
@@ -833,10 +880,20 @@ class ImageMarker(QWidget):
         self.coords_display.setObjectName("formValueLabel")
         form_layout.addRow(self._make_label("Coordenadas"), self.coords_display)
 
+        # Última leitura real (separada dos valores esperados).
+        self.last_measurement_label = QLabel("—")
+        self.last_measurement_label.setObjectName("formValueLabel")
+        form_layout.addRow(self._make_label("Última captura"), self.last_measurement_label)
+
+        self.last_measurement_time = QLabel("—")
+        self.last_measurement_time.setObjectName("formValueLabel")
+        form_layout.addRow(self._make_label("Capturada em"), self.last_measurement_time)
+
         # Voltage
         self.expected_voltage = QLineEdit()
         self.expected_voltage.setPlaceholderText("Ex: 3.3, 5.0, 12.0")
         self.expected_voltage.setObjectName("formInput")
+        self.expected_voltage.setMinimumHeight(30)
         self.expected_voltage.setValidator(QDoubleValidator(-1000, 1000, 4))
         self.expected_voltage.textChanged.connect(lambda: self._validate_field(self.expected_voltage))
         form_layout.addRow(self._make_label("Tensao (V)"), self.expected_voltage)
@@ -845,6 +902,7 @@ class ImageMarker(QWidget):
         self.expected_current = QLineEdit()
         self.expected_current.setPlaceholderText("Ex: 0.1, 0.5, 1.0")
         self.expected_current.setObjectName("formInput")
+        self.expected_current.setMinimumHeight(30)
         self.expected_current.setValidator(QDoubleValidator(-100, 100, 4))
         self.expected_current.textChanged.connect(lambda: self._validate_field(self.expected_current))
         form_layout.addRow(self._make_label("Corrente (A)"), self.expected_current)
@@ -853,6 +911,7 @@ class ImageMarker(QWidget):
         self.expected_frequency = QLineEdit()
         self.expected_frequency.setPlaceholderText("Ex: 1000, 12000")
         self.expected_frequency.setObjectName("formInput")
+        self.expected_frequency.setMinimumHeight(30)
         self.expected_frequency.setValidator(QDoubleValidator(0, 1e12, 2))
         self.expected_frequency.textChanged.connect(lambda: self._validate_field(self.expected_frequency))
         form_layout.addRow(self._make_label("Frequencia (Hz)"), self.expected_frequency)
@@ -861,6 +920,7 @@ class ImageMarker(QWidget):
         self.expected_waveform = QLineEdit()
         self.expected_waveform.setPlaceholderText("Senoidal, Quadrada...")
         self.expected_waveform.setObjectName("formInput")
+        self.expected_waveform.setMinimumHeight(30)
         form_layout.addRow(self._make_label("Forma de Onda"), self.expected_waveform)
 
         # Separator
@@ -874,6 +934,7 @@ class ImageMarker(QWidget):
         self.tolerance_voltage = QLineEdit()
         self.tolerance_voltage.setPlaceholderText("+/- V")
         self.tolerance_voltage.setObjectName("formInput")
+        self.tolerance_voltage.setMinimumHeight(30)
         self.tolerance_voltage.setValidator(QDoubleValidator(0, 1000, 4))
         self.tolerance_voltage.textChanged.connect(lambda: self._validate_field(self.tolerance_voltage))
         form_layout.addRow(self._make_label("Toler. Tensao"), self.tolerance_voltage)
@@ -882,6 +943,7 @@ class ImageMarker(QWidget):
         self.tolerance_current = QLineEdit()
         self.tolerance_current.setPlaceholderText("+/- A")
         self.tolerance_current.setObjectName("formInput")
+        self.tolerance_current.setMinimumHeight(30)
         self.tolerance_current.setValidator(QDoubleValidator(0, 100, 4))
         self.tolerance_current.textChanged.connect(lambda: self._validate_field(self.tolerance_current))
         form_layout.addRow(self._make_label("Toler. Corrente"), self.tolerance_current)
@@ -890,6 +952,7 @@ class ImageMarker(QWidget):
         self.tolerance_frequency = QLineEdit()
         self.tolerance_frequency.setPlaceholderText("+/- Hz")
         self.tolerance_frequency.setObjectName("formInput")
+        self.tolerance_frequency.setMinimumHeight(30)
         self.tolerance_frequency.setValidator(QDoubleValidator(0, 1e12, 2))
         self.tolerance_frequency.textChanged.connect(lambda: self._validate_field(self.tolerance_frequency))
         form_layout.addRow(self._make_label("Toler. Freq."), self.tolerance_frequency)
@@ -903,7 +966,8 @@ class ImageMarker(QWidget):
         self.notes_field = QTextEdit()
         self.notes_field.setObjectName("notesField")
         self.notes_field.setPlaceholderText("Observacoes sobre este ponto de teste...")
-        self.notes_field.setMaximumHeight(64)
+        self.notes_field.setMinimumHeight(58)
+        self.notes_field.setMaximumHeight(82)
         layout.addWidget(self.notes_field)
 
         # ── Action buttons ──
@@ -922,13 +986,8 @@ class ImageMarker(QWidget):
         self.save_btn.clicked.connect(self.save_point_properties)
         self.save_btn.setEnabled(False)
 
-        # Measure button (edit mode only)
-        if self.mode == "edit":
-            self.measure_btn = QPushButton("Medir")
-            self.measure_btn.setObjectName("measureBtn")
-            self.measure_btn.setFixedHeight(34)
-            self.measure_btn.clicked.connect(self.open_measurement_dialog)
-            btn_layout.addWidget(self.measure_btn)
+        # A captura agora fica no painel único de osciloscópio acima da lista.
+        self.measure_btn = None
 
         btn_layout.addStretch()
         btn_layout.addWidget(self.cancel_btn)
@@ -1129,6 +1188,14 @@ class ImageMarker(QWidget):
             }}
 
             /* ── Form Card ── */
+            QScrollArea#formScroll {{
+                background: {Theme.BG_SURFACE};
+                border: none;
+            }}
+            QScrollArea#formScroll > QWidget > QWidget {{
+                background: {Theme.BG_SURFACE};
+            }}
+
             QFrame#formCard {{
                 background: {Theme.BG_SURFACE};
                 border: 1px solid {Theme.BORDER_SUBTLE};
@@ -1435,7 +1502,7 @@ class ImageMarker(QWidget):
 
             # ID with color indicator
             id_item = QTableWidgetItem(f"  {tp.refdes}")
-            color_hex = Theme.point_color(tp.refdes, tp.expected_voltage_v)
+            color_hex = getattr(tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
             id_item.setForeground(QColor(color_hex))
             id_item.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
             id_item.setData(Qt.ItemDataRole.UserRole, tp.id)
@@ -1458,6 +1525,23 @@ class ImageMarker(QWidget):
             v_item.setForeground(QColor(Theme.TEXT_PRIMARY if tp.expected_voltage_v else Theme.TEXT_MUTED))
             self.points_table.setItem(row_idx, 2, v_item)
 
+            # Última captura do osciloscópio
+            if getattr(tp, "last_scope_vpp_v", None) is not None:
+                ch = getattr(tp, "last_scope_channel", None)
+                ch_text = f"CH{ch} " if ch else ""
+                measured_text = f"{ch_text}{tp.last_scope_vpp_v:.4g} Vpp"
+                freq = getattr(tp, "last_scope_frequency_hz", None)
+                if freq is not None:
+                    measured_text += f" • {freq:.4g} Hz"
+            else:
+                measured_text = "--"
+            measured_item = QTableWidgetItem(measured_text)
+            measured_item.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+            measured_item.setForeground(
+                QColor(Theme.VCC_GREEN if measured_text != "--" else Theme.TEXT_MUTED)
+            )
+            self.points_table.setItem(row_idx, 3, measured_item)
+
             # Tolerance
             if tp.tolerance_voltage_v is not None:
                 t_text = f"+/-{tp.tolerance_voltage_v:.2f}"
@@ -1466,13 +1550,13 @@ class ImageMarker(QWidget):
             t_item = QTableWidgetItem(t_text)
             t_item.setFont(QFont("Consolas", 9))
             t_item.setForeground(QColor(Theme.TEXT_MUTED))
-            self.points_table.setItem(row_idx, 3, t_item)
+            self.points_table.setItem(row_idx, 4, t_item)
 
             # Position
             pos_item = QTableWidgetItem(f"({tp.x}, {tp.y})")
             pos_item.setFont(QFont("Consolas", 9))
             pos_item.setForeground(QColor(Theme.TEXT_MUTED))
-            self.points_table.setItem(row_idx, 4, pos_item)
+            self.points_table.setItem(row_idx, 5, pos_item)
 
             # ── Add to canvas ──
             tp_item = TestPointItem(tp, self)
@@ -1490,6 +1574,7 @@ class ImageMarker(QWidget):
         if not rows:
             self.current_point = None
             self.clear_point_form()
+            self.oscilloscope_panel.set_selected_point(None)
             self._update_form_buttons(False)
             # Deselect all canvas points
             for tp_item in self.test_point_items.values():
@@ -1505,6 +1590,7 @@ class ImageMarker(QWidget):
 
         if self.current_point:
             self.populate_point_form(self.current_point)
+            self.oscilloscope_panel.set_selected_point(self.current_point)
             self._update_form_buttons(self.mode == "edit")
 
             # Highlight on canvas
@@ -1521,6 +1607,7 @@ class ImageMarker(QWidget):
         """Select a point programmatically (e.g., from canvas click)."""
         self.current_point = tp
         self.populate_point_form(tp)
+        self.oscilloscope_panel.set_selected_point(tp)
         self._update_form_buttons(self.mode == "edit")
 
         # Select in table
@@ -1544,11 +1631,25 @@ class ImageMarker(QWidget):
             return
 
         self.form_title.setText(f"{tp.refdes}")
-        color_hex = Theme.point_color(tp.refdes, tp.expected_voltage_v)
+        color_hex = getattr(tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
         self.form_title.setStyleSheet(f"color: {color_hex}; font-size: 14px; font-weight: 800;")
 
         self.refdes_label.setText(tp.refdes or "-")
         self.coords_display.setText(f"({tp.x}, {tp.y})")
+
+        if getattr(tp, "last_scope_vpp_v", None) is not None:
+            ch = getattr(tp, "last_scope_channel", None)
+            parts = [f"CH{ch}" if ch else "", f"{tp.last_scope_vpp_v:.4g} Vpp"]
+            freq = getattr(tp, "last_scope_frequency_hz", None)
+            if freq is not None:
+                parts.append(f"{freq:.4g} Hz")
+            self.last_measurement_label.setText(" • ".join(p for p in parts if p))
+        else:
+            self.last_measurement_label.setText("—")
+        captured_at = getattr(tp, "last_scope_at", None)
+        self.last_measurement_time.setText(
+            captured_at.strftime("%d/%m/%Y %H:%M:%S") if captured_at else "—"
+        )
 
         self.expected_voltage.setText("" if tp.expected_voltage_v is None else str(tp.expected_voltage_v))
         self.expected_current.setText("" if tp.expected_current_a is None else str(tp.expected_current_a))
@@ -1567,6 +1668,8 @@ class ImageMarker(QWidget):
         self.form_title.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 13px; font-weight: 700;")
         self.refdes_label.setText("-")
         self.coords_display.setText("-")
+        self.last_measurement_label.setText("—")
+        self.last_measurement_time.setText("—")
         self.expected_voltage.clear()
         self.expected_current.clear()
         self.expected_frequency.clear()
@@ -1635,7 +1738,8 @@ class ImageMarker(QWidget):
                 board_id=self.board.id,
                 refdes=refdes,
                 x=x,
-                y=y
+                y=y,
+                marker_color=Theme.DEFAULT_POINT_COLOR,
             )
             self.session.add(tp)
             self.session.commit()
@@ -1725,14 +1829,133 @@ class ImageMarker(QWidget):
             self.show_status(f"Erro ao salvar: {str(e)}", "error")
 
     # ──────────────────────────────────────────────────────────────
-    # MEASUREMENTS
+    # POINT COLOR + MULTIMETER MEASUREMENTS
     # ──────────────────────────────────────────────────────────────
+    def choose_point_color(self, tp=None):
+        """Altera apenas a cor do ponto escolhido e persiste no SQLite."""
+        tp = tp or self.current_point
+        if tp is None:
+            self.show_status("Selecione um ponto para alterar a cor", "warning")
+            return
+        initial = QColor(getattr(tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR)
+        chosen = QColorDialog.getColor(initial, self, f"Cor de {tp.refdes}")
+        if chosen.isValid():
+            self._save_point_color(tp, chosen.name().upper())
+
+    def reset_point_color(self, tp=None):
+        tp = tp or self.current_point
+        if tp is not None:
+            self._save_point_color(tp, Theme.DEFAULT_POINT_COLOR)
+
+    def _save_point_color(self, tp: TestPoint, color_hex: str):
+        try:
+            tp.marker_color = color_hex
+            self.session.add(tp)
+            self.session.commit()
+            item = self.test_point_items.get(tp.id)
+            if item is not None:
+                # Recarrega apenas a representação gráfica desse ponto.
+                self.view.scene().removeItem(item)
+                new_item = TestPointItem(tp, self)
+                self.view.scene().addItem(new_item)
+                self.test_point_items[tp.id] = new_item
+                new_item.set_selected_style(self.current_point is not None and self.current_point.id == tp.id)
+            for row in range(self.points_table.rowCount()):
+                cell = self.points_table.item(row, 0)
+                if cell and cell.data(Qt.ItemDataRole.UserRole) == tp.id:
+                    cell.setForeground(QColor(color_hex))
+                    break
+            if self.current_point is not None and self.current_point.id == tp.id:
+                self.populate_point_form(tp)
+            self.show_status(f"Cor de {tp.refdes} salva", "success")
+        except Exception as exc:
+            self.session.rollback()
+            logger.exception("Erro ao salvar cor do ponto")
+            self.show_status(f"Erro ao salvar cor: {exc}", "error")
+
+    def _persist_oscilloscope_reading(self, point_id: int, reading: OscilloscopeReading):
+        """Vincula uma captura do osciloscópio ao ponto e grava o histórico."""
+        import json
+
+        tp = self.session.get(TestPoint, int(point_id))
+        if tp is None:
+            self.show_status("O ponto selecionado não existe mais", "error")
+            return
+
+        try:
+            record = OscilloscopeCapture(
+                test_point_id=tp.id,
+                channel=int(reading.channel),
+                vpp_v=reading.vpp_v,
+                vrms_v=reading.vrms_v,
+                vmax_v=reading.vmax_v,
+                vmin_v=reading.vmin_v,
+                vavg_v=reading.vavg_v,
+                frequency_hz=reading.frequency_hz,
+                period_s=reading.period_s,
+                duty_cycle_pct=reading.duty_cycle_pct,
+                vertical_offset_v=reading.vertical_offset_v,
+                oscilloscope_id=reading.oscilloscope_id or None,
+                raw_json=json.dumps(reading.raw or {}, ensure_ascii=False),
+                waveform_json=(
+                    json.dumps(reading.waveform, ensure_ascii=False)
+                    if reading.waveform is not None else None
+                ),
+                timestamp=reading.timestamp,
+            )
+            tp.last_scope_channel = int(reading.channel)
+            tp.last_scope_vpp_v = reading.vpp_v
+            tp.last_scope_vrms_v = reading.vrms_v
+            tp.last_scope_frequency_hz = reading.frequency_hz
+            tp.last_scope_duty_pct = reading.duty_cycle_pct
+            tp.last_scope_at = reading.timestamp
+            tp.last_oscilloscope_id = reading.oscilloscope_id or None
+
+            self.session.add(record)
+            self.session.add(tp)
+            self.session.commit()
+
+            for row in range(self.points_table.rowCount()):
+                id_item = self.points_table.item(row, 0)
+                if id_item and id_item.data(Qt.ItemDataRole.UserRole) == tp.id:
+                    measured_item = self.points_table.item(row, 3)
+                    if measured_item is None:
+                        measured_item = QTableWidgetItem()
+                        self.points_table.setItem(row, 3, measured_item)
+                    measured_item.setText(reading.display_text)
+                    measured_item.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+                    measured_item.setForeground(QColor(Theme.VCC_GREEN))
+                    break
+
+            graphics_item = self.test_point_items.get(tp.id)
+            if graphics_item is not None:
+                graphics_item.tp = tp
+                graphics_item.update_tooltip()
+
+            if self.current_point is not None and self.current_point.id == tp.id:
+                self.current_point = tp
+                self.populate_point_form(tp)
+
+            self.point_updated.emit(tp)
+            self.show_status(
+                f"{reading.display_text} vinculada ao ponto {tp.refdes}",
+                "success",
+            )
+            logger.info(
+                "Captura de osciloscópio salva: point=%s channel=CH%s vpp=%s freq=%s scope=%s",
+                tp.refdes, reading.channel, reading.vpp_v, reading.frequency_hz, reading.oscilloscope_id,
+            )
+        except Exception as exc:
+            self.session.rollback()
+            logger.exception("Erro ao salvar captura do osciloscópio")
+            self.show_status(f"Erro ao salvar captura: {exc}", "error")
+
     def open_measurement_dialog(self):
-        dialog = MeasurementDialog(self.instruments, self)
-        if dialog.exec():
-            result = dialog.get_measurement_result()
-            if result is not None and self.current_point:
-                self.show_status(f"Medicao realizada: {result}", "success")
+        """Compatibilidade: a medição usa o painel integrado do osciloscópio."""
+        if self.current_point is None:
+            self.show_status("Selecione um ponto antes de capturar", "warning")
+            return
+        self.oscilloscope_panel.capture_now()
 
     # ──────────────────────────────────────────────────────────────
     # CONTEXT MENUS
@@ -1761,12 +1984,24 @@ class ImageMarker(QWidget):
         select_action = menu.addAction(f"Selecionar {tp.refdes}")
         select_action.triggered.connect(lambda: self.select_point(tp))
 
+        menu.addSeparator()
+        capture_action = menu.addAction("Capturar do osciloscópio")
+        capture_action.triggered.connect(lambda: self._capture_point_from_menu(tp))
+
         if self.mode == "edit":
+            color_action = menu.addAction("Alterar cor…")
+            color_action.triggered.connect(lambda: self.choose_point_color(tp))
+            reset_color_action = menu.addAction("Restaurar vermelho")
+            reset_color_action.triggered.connect(lambda: self.reset_point_color(tp))
             menu.addSeparator()
             delete_action = menu.addAction(f"Excluir {tp.refdes}")
             delete_action.triggered.connect(lambda: self._delete_point_by_ref(tp))
 
         menu.exec(screen_pos)
+
+    def _capture_point_from_menu(self, tp: TestPoint):
+        self.select_point(tp)
+        self.oscilloscope_panel.capture_now()
 
     def _delete_point_by_ref(self, tp: TestPoint):
         """Delete a specific point (from context menu)."""
@@ -1802,6 +2037,29 @@ class ImageMarker(QWidget):
             lambda: self.add_point_by_click(scene_pos.x(), scene_pos.y())
         )
         menu.exec(screen_pos)
+
+    def keyPressEvent(self, event):
+        """Espaço captura a leitura atual do osciloscópio no ponto selecionado."""
+        focus = QApplication.focusWidget()
+        editing_text = isinstance(focus, (QLineEdit, QTextEdit, QComboBox))
+        if (
+            event.key() == Qt.Key.Key_Space
+            and not editing_text
+            and self.current_point is not None
+        ):
+            if self.oscilloscope_panel.is_continuous():
+                if not self.oscilloscope_panel.capture_latest_for_selected():
+                    self.oscilloscope_panel.capture_now()
+            else:
+                self.oscilloscope_panel.capture_now()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if hasattr(self, "oscilloscope_panel"):
+            self.oscilloscope_panel.shutdown()
+        super().closeEvent(event)
 
     # ──────────────────────────────────────────────────────────────
     # STATUS BAR

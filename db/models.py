@@ -128,21 +128,69 @@ class TestPoint(Base):
     tolerance_current_a: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     tolerance_frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # Measured columns removed, they belong to the measurements table
-
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # Cor visual persistida do marcador no scanner. Novos pontos sempre nascem
-    # vermelhos; a UI pode alterar esta cor individualmente via QColorDialog.
+    # Aparência do marcador no scanner. Novos pontos sempre nascem vermelhos.
     marker_color: Mapped[str] = mapped_column(String(7), default="#E53935", nullable=False)
 
+    # Última captura do osciloscópio. Os valores esperados do ponto permanecem
+    # separados das medições reais. O histórico completo fica em
+    # oscilloscope_captures.
+    last_scope_channel: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_scope_vpp_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_scope_vrms_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_scope_frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_scope_duty_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_scope_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_oscilloscope_id: Mapped[Optional[str]] = mapped_column(String(250), nullable=True)
+
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     board_id: Mapped[int] = mapped_column(ForeignKey("board_units.id"))
     board: Mapped["BoardUnit"] = relationship("BoardUnit", back_populates="test_points")
+    oscilloscope_captures: Mapped[List["OscilloscopeCapture"]] = relationship(
+        "OscilloscopeCapture",
+        back_populates="test_point",
+        cascade="all, delete-orphan",
+        order_by="OscilloscopeCapture.timestamp.desc()",
+    )
 
     def __repr__(self):
         return f"TestPoint(id={self.id}, refdes='{self.refdes}', x={self.x}, y={self.y})"
+
+
+class OscilloscopeCapture(Base):
+    """Histórico de capturas do Rigol/SCPI vinculadas a um ponto da placa."""
+
+    __tablename__ = "oscilloscope_captures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    test_point_id: Mapped[int] = mapped_column(
+        ForeignKey("test_points.id", ondelete="CASCADE"), index=True
+    )
+    channel: Mapped[int] = mapped_column(Integer)
+    vpp_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vrms_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vmax_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vmin_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vavg_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    period_s: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duty_cycle_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vertical_offset_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    oscilloscope_id: Mapped[Optional[str]] = mapped_column(String(250), nullable=True)
+    raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    waveform_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    test_point: Mapped["TestPoint"] = relationship(
+        "TestPoint", back_populates="oscilloscope_captures"
+    )
+
+    def __repr__(self):
+        return (
+            f"OscilloscopeCapture(id={self.id}, point={self.test_point_id}, "
+            f"channel=CH{self.channel}, vpp={self.vpp_v})"
+        )
 
 
 class TestPlan(Base):

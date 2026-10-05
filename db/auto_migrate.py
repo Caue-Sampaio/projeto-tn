@@ -1,10 +1,5 @@
 # db/auto_migrate.py
-"""Ajustes automáticos de esquema para bancos SQLite já existentes.
-
-`Base.metadata.create_all()` cria tabelas novas (como `machines`), mas NÃO
-adiciona colunas novas em tabelas que já existem. Este módulo faz isso, sem
-apagar nenhum dado.
-"""
+"""Migrações aditivas e seguras para bancos SQLite existentes."""
 import logging
 
 from sqlalchemy import inspect, text
@@ -15,38 +10,44 @@ logger = logging.getLogger(__name__)
 
 
 def _columns(engine, table):
-    return {col["name"] for col in inspect(engine).get_columns(table)}
+    inspector = inspect(engine)
+    if table not in inspector.get_table_names():
+        return set()
+    return {col["name"] for col in inspector.get_columns(table)}
+
+
+def _add_column(engine, table: str, column: str, ddl: str) -> None:
+    if column in _columns(engine, table):
+        return
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+    logger.info("Coluna %s.%s adicionada.", table, column)
 
 
 def ensure_schema(engine):
-    """Cria tabelas que faltam e adiciona colunas novas. Pode rodar quantas vezes quiser."""
+    """Cria tabelas/colunas novas sem apagar dados existentes."""
     Base.metadata.create_all(engine)
 
-    if "machine_id" not in _columns(engine, "board_units"):
-        with engine.begin() as conn:
-            conn.execute(
-                text("ALTER TABLE board_units ADD COLUMN machine_id INTEGER REFERENCES machines(id)")
-            )
-        logger.info("Coluna board_units.machine_id adicionada.")
+    _add_column(engine, "board_units", "machine_id", "INTEGER REFERENCES machines(id)")
+    _add_column(engine, "machines", "image_path", "VARCHAR(500)")
 
-    if "image_path" not in _columns(engine, "machines"):
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE machines ADD COLUMN image_path VARCHAR(500)"))
-        logger.info("Coluna machines.image_path adicionada.")
+    _add_column(
+        engine,
+        "test_points",
+        "marker_color",
+        "VARCHAR(7) NOT NULL DEFAULT '#E53935'",
+    )
 
-    # Persistência da cor de cada ponto. Bancos antigos recebem vermelho como
-    # valor padrão, sem apagar ou recriar nenhum ponto já existente.
-    if "marker_color" not in _columns(engine, "test_points"):
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE test_points "
-                    "ADD COLUMN marker_color VARCHAR(7) NOT NULL DEFAULT '#E53935'"
-                )
-            )
-        logger.info("Coluna test_points.marker_color adicionada.")
+    # Resumo da última captura do osciloscópio no próprio ponto.
+    # O histórico completo é criado em oscilloscope_captures por create_all().
+    _add_column(engine, "test_points", "last_scope_channel", "INTEGER")
+    _add_column(engine, "test_points", "last_scope_vpp_v", "FLOAT")
+    _add_column(engine, "test_points", "last_scope_vrms_v", "FLOAT")
+    _add_column(engine, "test_points", "last_scope_frequency_hz", "FLOAT")
+    _add_column(engine, "test_points", "last_scope_duty_pct", "FLOAT")
+    _add_column(engine, "test_points", "last_scope_at", "DATETIME")
+    _add_column(engine, "test_points", "last_oscilloscope_id", "VARCHAR(250)")
 
-    # Normaliza registros eventualmente nulos/vazios de versões intermediárias.
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -54,4 +55,3 @@ def ensure_schema(engine):
                 "WHERE marker_color IS NULL OR TRIM(marker_color) = ''"
             )
         )
-

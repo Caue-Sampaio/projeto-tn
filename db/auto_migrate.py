@@ -33,3 +33,25 @@ def ensure_schema(engine):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE machines ADD COLUMN image_path VARCHAR(500)"))
         logger.info("Coluna machines.image_path adicionada.")
+
+    # Persistência da cor de cada ponto. Bancos antigos recebem vermelho como
+    # valor padrão, sem apagar ou recriar nenhum ponto já existente.
+    if "marker_color" not in _columns(engine, "test_points"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE test_points "
+                    "ADD COLUMN marker_color VARCHAR(7) NOT NULL DEFAULT '#E53935'"
+                )
+            )
+        logger.info("Coluna test_points.marker_color adicionada.")
+
+    # Normaliza registros eventualmente nulos/vazios de versões intermediárias.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE test_points SET marker_color = '#E53935' "
+                "WHERE marker_color IS NULL OR TRIM(marker_color) = ''"
+            )
+        )
+

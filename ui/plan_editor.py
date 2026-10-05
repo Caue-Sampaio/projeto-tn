@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QFormLayout, QLineEdit, QComboBox, QDialogButtonBox,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QHBoxLayout, QSpinBox, QTextEdit, QTabWidget, QGroupBox,
-    QCheckBox, QToolButton
+    QCheckBox, QToolButton, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer  # Adicionei QTimer aqui
 from PyQt6.QtGui import QIcon, QFont
@@ -35,191 +35,192 @@ class StepForm(QDialog):
             self.load_step_data()
             
     def setup_ui(self):
-        """Configura a interface do usuário"""
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 15)
-        
-        # Formulário principal
-        form_layout = QFormLayout()
-        form_layout.setSpacing(12)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        
-        # Descrição da etapa
+        """Monta o formulário de etapa com a mesma linguagem visual do dashboard."""
+        self.setObjectName("stepDialog")
+        self.setMinimumWidth(560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("stepHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(22, 16, 22, 16)
+        header_layout.setSpacing(3)
+
+        title = QLabel("Editar etapa" if self.is_edit else "Nova etapa")
+        title.setObjectName("stepTitle")
+        subtitle = QLabel(
+            "Defina o ponto, o valor esperado e a tolerância desta medição."
+        )
+        subtitle.setObjectName("stepSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        root.addWidget(header)
+
+        body = QWidget()
+        body.setObjectName("stepBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(22, 20, 22, 16)
+        body_layout.setSpacing(14)
+
+        form_card = QFrame()
+        form_card.setObjectName("formCard")
+        form_layout = QFormLayout(form_card)
+        form_layout.setContentsMargins(18, 18, 18, 18)
+        form_layout.setHorizontalSpacing(14)
+        form_layout.setVerticalSpacing(12)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         self.description_input = QLineEdit()
-        self.description_input.setPlaceholderText("Ex: Tensão de Alimentação, Corrente de Consumo, Frequência do Clock...")
+        self.description_input.setPlaceholderText("Ex: Tensão de alimentação")
         self.description_input.setToolTip("Descrição clara e objetiva da etapa de teste")
         self.set_field_style(self.description_input)
-        form_layout.addRow("Descrição da Etapa:*", self.description_input)
-        
-        # Unidade
-        unit_layout = QHBoxLayout()
+        form_layout.addRow("Descrição *", self.description_input)
+
+        measurement_row = QHBoxLayout()
+        measurement_row.setSpacing(10)
         self.unit_select = QComboBox()
-        unidades = ["V", "A", "Ω", "Hz", "°C", "%", "dB", "s", "W"]
-        self.unit_select.addItems(unidades)
+        self.unit_select.addItems(["V", "A", "Ω", "Hz", "°C", "%", "dB", "s", "W"])
         self.unit_select.setEditable(True)
         self.unit_select.setToolTip("Unidade de medida")
-        self.unit_select.setMinimumWidth(80)
-        unit_layout.addWidget(self.unit_select)
-        
-        # Ordem da etapa
-        unit_layout.addWidget(QLabel("Ordem:"))
+        self.unit_select.setMinimumWidth(110)
+
         self.order_spinbox = QSpinBox()
         self.order_spinbox.setRange(1, 1000)
         self.order_spinbox.setValue(1)
         self.order_spinbox.setToolTip("Ordem de execução da etapa")
-        self.order_spinbox.setMinimumWidth(60)
-        unit_layout.addWidget(self.order_spinbox)
-        unit_layout.addStretch()
-        
-        form_layout.addRow("Unidade/Ordem:", unit_layout)
-        
-        # Valores esperados
-        values_layout = QHBoxLayout()
-        
+        self.order_spinbox.setMinimumWidth(90)
+
+        measurement_row.addWidget(QLabel("Unidade"))
+        measurement_row.addWidget(self.unit_select)
+        measurement_row.addSpacing(10)
+        measurement_row.addWidget(QLabel("Ordem"))
+        measurement_row.addWidget(self.order_spinbox)
+        measurement_row.addStretch()
+        form_layout.addRow("Medição", measurement_row)
+
+        values_row = QHBoxLayout()
+        values_row.setSpacing(10)
         self.desired_input = QLineEdit()
-        self.desired_input.setPlaceholderText("Ex: 3.3, 12.0, 1000")
+        self.desired_input.setPlaceholderText("Ex: 3.3")
         self.desired_input.setToolTip("Valor esperado para a medição")
         validator = QtGui.QDoubleValidator()
         validator.setBottom(0)
         self.desired_input.setValidator(validator)
         self.set_field_style(self.desired_input)
-        values_layout.addWidget(QLabel("Desejado:"))
-        values_layout.addWidget(self.desired_input)
-        
+
         self.tolerance_input = QLineEdit()
-        self.tolerance_input.setPlaceholderText("Ex: 0.1, 0.05, 50")
+        self.tolerance_input.setPlaceholderText("Ex: 0.1")
         self.tolerance_input.setToolTip("Margem de tolerância aceitável (±)")
         self.tolerance_input.setValidator(validator)
         self.set_field_style(self.tolerance_input)
-        values_layout.addWidget(QLabel("Tolerância:"))
-        values_layout.addWidget(self.tolerance_input)
-        
-        form_layout.addRow("Valores Esperados:", values_layout)
-        
-        # Ponto de teste
+
+        values_row.addWidget(QLabel("Desejado"))
+        values_row.addWidget(self.desired_input, 1)
+        values_row.addWidget(QLabel("Tolerância ±"))
+        values_row.addWidget(self.tolerance_input, 1)
+        form_layout.addRow("Valores", values_row)
+
         self.point_select = QComboBox()
         points = self.session.query(TestPoint).filter_by(board_id=self.board.id).all()
         self.points = points
-        self.point_select.addItem("Nenhum", None)
-        for p in points:
-            self.point_select.addItem(f"{p.refdes} (X:{p.x}, Y:{p.y})", p)
-        self.point_select.setToolTip("Selecione o ponto físico da placa (opcional)")
-        form_layout.addRow("Ponto de Teste:", self.point_select)
-        
-        # Observações
+        self.point_select.addItem("Nenhum ponto associado", None)
+        for point in points:
+            self.point_select.addItem(
+                f"{point.refdes}  •  X:{point.x}  Y:{point.y}", point
+            )
+        self.point_select.setToolTip("Ponto físico da placa associado à etapa")
+        form_layout.addRow("Ponto de teste", self.point_select)
+
         self.notes_input = QTextEdit()
-        self.notes_input.setPlaceholderText("Observações adicionais sobre esta etapa de teste...")
-        self.notes_input.setMaximumHeight(80)
+        self.notes_input.setPlaceholderText("Observações adicionais sobre esta etapa...")
+        self.notes_input.setMaximumHeight(88)
         self.notes_input.setToolTip("Informações complementares sobre a etapa")
-        form_layout.addRow("Observações:", self.notes_input)
-        
-        layout.addLayout(form_layout)
-        
-        # Status de validação
+        form_layout.addRow("Observações", self.notes_input)
+
+        body_layout.addWidget(form_card)
+
         self.validation_label = QLabel("")
-        self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.validation_label.setStyleSheet("color: #E74C3C; font-size: 11px; min-height: 16px;")
-        layout.addWidget(self.validation_label)
-        
-        # Botões
+        self.validation_label.setObjectName("validationText")
+        self.validation_label.setWordWrap(True)
+        body_layout.addWidget(self.validation_label)
+        root.addWidget(body)
+
+        footer = QFrame()
+        footer.setObjectName("stepFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(22, 12, 22, 16)
+        footer_layout.addStretch()
+
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.buttons.accepted.connect(self.validate_and_accept)
         self.buttons.rejected.connect(self.reject)
-        
-        # Estilizar botões
         ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok_button.setText("Salvar" if self.is_edit else "Adicionar")
-        ok_button.setMinimumWidth(100)
-        
+        ok_button.setText("Salvar etapa" if self.is_edit else "Adicionar etapa")
+        ok_button.setObjectName("primaryDialogButton")
         cancel_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel_button.setMinimumWidth(100)
-        
-        layout.addWidget(self.buttons)
-        
-        self.setLayout(layout)
-        
+        cancel_button.setText("Cancelar")
+        cancel_button.setObjectName("secondaryDialogButton")
+        footer_layout.addWidget(self.buttons)
+        root.addWidget(footer)
+
     def apply_styles(self):
-        """Aplica estilos aos componentes"""
+        """Aplica a paleta já usada no programa, sem introduzir novas cores."""
         self.setStyleSheet("""
-            QDialog {
-                background-color: #F8F9FA;
-                color: #1E293B;
+            QDialog#stepDialog { background-color: #F4F7F9; color: #0F172A; }
+            QFrame#stepHeader { background-color: #0F172A; }
+            QLabel#stepTitle {
+                color: #FFFFFF; font-size: 18px; font-weight: 700; background: transparent;
             }
-            QLabel {
-                color: #1E293B;
+            QLabel#stepSubtitle {
+                color: #CBD5E1; font-size: 11px; background: transparent;
             }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #BDC3C7;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: #1E293B;
+            QWidget#stepBody { background-color: #F4F7F9; }
+            QFrame#formCard {
+                background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: #1E293B;
+            QFrame#stepFooter {
+                background-color: #FFFFFF; border-top: 1px solid #E2E8F0;
             }
-            QComboBox, QSpinBox {
-                border: 2px solid #BDC3C7;
-                border-radius: 5px;
-                padding: 6px 10px;
-                font-size: 13px;
-                background-color: white;
-                color: #1E293B;
+            QLabel { color: #334155; font-size: 12px; }
+            QLabel#validationText { color: #DC2626; font-size: 11px; font-weight: 600; }
+            QLineEdit, QComboBox, QSpinBox, QTextEdit {
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 7px 10px; font-size: 13px;
+                selection-background-color: #0284C7; selection-color: #FFFFFF;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTextEdit:focus {
+                border: 1px solid #0284C7;
             }
             QComboBox QAbstractItemView {
-                background-color: white;
-                color: #1E293B;
-                selection-background-color: #0284C7;
-                selection-color: white;
+                background-color: #FFFFFF; color: #0F172A;
+                selection-background-color: #0284C7; selection-color: #FFFFFF;
             }
-            QDialogButtonBox QPushButton {
-                background-color: #0284C7;
-                color: white;
-                border: 1px solid #0369A1;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 90px;
+            QPushButton#primaryDialogButton {
+                background-color: #0F766E; color: #FFFFFF;
+                border: 1px solid #0D9488; border-radius: 8px;
+                padding: 8px 16px; font-weight: 700; min-width: 120px;
             }
-            QDialogButtonBox QPushButton:hover {
-                background-color: #0369A1;
+            QPushButton#primaryDialogButton:hover { background-color: #0D9488; }
+            QPushButton#secondaryDialogButton {
+                background-color: #F1F5F9; color: #334155;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 8px 16px; font-weight: 600; min-width: 90px;
             }
+            QPushButton#secondaryDialogButton:hover { background-color: #E2E8F0; }
         """)
-        
+
     def set_field_style(self, field):
-        """Aplica estilo consistente aos campos"""
+        """Mantido por compatibilidade; o estilo agora é centralizado no diálogo."""
         if isinstance(field, QLineEdit):
-            field.setStyleSheet("""
-                QLineEdit {
-                    border: 2px solid #BDC3C7;
-                    border-radius: 5px;
-                    padding: 8px 12px;
-                    font-size: 14px;
-                    background-color: white;
-                    color: #1E293B;
-                    min-height: 20px;
-                    selection-background-color: #0284C7;
-                    selection-color: white;
-                }
-                QLineEdit:focus {
-                    border-color: #0284C7;
-                    background-color: #F8FAFC;
-                    color: #1E293B;
-                }
-                QLineEdit[error="true"] {
-                    border-color: #E74C3C;
-                    background-color: #FDEDEC;
-                    color: #1E293B;
-                }
-            """)
-            
+            field.setProperty("error", "false")
+
     def load_step_data(self):
         """Carrega dados da etapa para edição"""
         if not self.step:
@@ -341,338 +342,294 @@ class PlanEditor(QWidget):
             self.create_plan()
             
     def setup_ui(self):
-        """Configura a interface do usuário"""
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Cabeçalho
-        header_layout = self.create_header()
-        layout.addLayout(header_layout)
-        
-        # Abas
+        """Monta o editor com foco em etapas, configurações e ação de salvar."""
+        self.setObjectName("planEditorRoot")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 14)
+        layout.setSpacing(14)
+
+        layout.addWidget(self.create_header())
+
         self.tab_widget = QTabWidget()
-        
-        # Aba de etapas
-        steps_tab = self.create_steps_tab()
-        self.tab_widget.addTab(steps_tab, "📋 Etapas de Teste")
-        
-        # Aba de configurações
-        settings_tab = self.create_settings_tab()
-        self.tab_widget.addTab(settings_tab, "⚙️ Configurações")
-        
-        layout.addWidget(self.tab_widget)
-        
-        # Barra de status
+        self.tab_widget.setObjectName("editorTabs")
+        self.tab_widget.setDocumentMode(True)
+        self.tab_widget.addTab(self.create_steps_tab(), "Etapas de teste")
+        self.tab_widget.addTab(self.create_settings_tab(), "Informações do plano")
+        layout.addWidget(self.tab_widget, 1)
+
         self.status_label = QLabel("Pronto")
-        self.status_label.setStyleSheet("color: #7F8C8D; font-size: 11px; padding: 5px;")
+        self.status_label.setObjectName("editorStatus")
         layout.addWidget(self.status_label)
-        
-        self.setLayout(layout)
-        
+
     def create_header(self):
-        """Cria cabeçalho do editor"""
-        layout = QHBoxLayout()
-        
-        # Informações do plano
+        """Cabeçalho compacto, seguindo a mesma identidade do dashboard."""
+        header = QFrame()
+        header.setObjectName("editorHeader")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
+
         info_layout = QVBoxLayout()
+        info_layout.setSpacing(3)
         self.plan_title = QLabel("Novo Plano de Teste" if not self.is_edit else self.plan.name)
-        self.plan_title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        self.plan_title.setStyleSheet("color: #2C3E50;")
-        
-        self.plan_subtitle = QLabel(f"Placa: {self.board.name} ({self.board.serial_number})")
-        self.plan_subtitle.setStyleSheet("color: #7F8C8D;")
-        
+        self.plan_title.setObjectName("editorTitle")
+        self.plan_subtitle = QLabel(
+            f"Placa: {self.board.name}  •  S/N: {self.board.serial_number}"
+        )
+        self.plan_subtitle.setObjectName("editorSubtitle")
         info_layout.addWidget(self.plan_title)
         info_layout.addWidget(self.plan_subtitle)
-        layout.addLayout(info_layout)
-        
-        layout.addStretch()
-        
-        # Botões de ação
-        action_layout = QVBoxLayout()
-        
-        self.save_button = QPushButton("💾 Salvar Plano")
-        self.save_button.setMinimumWidth(120)
-        self.save_button.clicked.connect(self.save_plan)
-        
+        layout.addLayout(info_layout, 1)
+
         self.close_button = QPushButton("Fechar")
-        self.close_button.setMinimumWidth(120)
+        self.close_button.setObjectName("headerSecondary")
+        self.close_button.setMinimumHeight(36)
         self.close_button.clicked.connect(self.close)
-        
-        action_layout.addWidget(self.save_button)
-        action_layout.addWidget(self.close_button)
-        layout.addLayout(action_layout)
-        
-        return layout
-        
+
+        self.save_button = QPushButton("Salvar plano")
+        self.save_button.setObjectName("headerPrimary")
+        self.save_button.setMinimumHeight(36)
+        self.save_button.clicked.connect(self.save_plan)
+
+        layout.addWidget(self.close_button)
+        layout.addWidget(self.save_button)
+        return header
+
     def create_steps_tab(self):
-        """Cria aba de etapas de teste"""
+        """Aba principal do editor: ações essenciais + tabela de etapas."""
         widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        
-        # Controles de etapas
-        controls_layout = QHBoxLayout()
-        
-        self.add_step_button = QPushButton("➕ Adicionar Etapa")
-        self.add_step_button.setMinimumHeight(35)
+        widget.setObjectName("stepsTab")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("editorCard")
+        controls_layout = QHBoxLayout(toolbar)
+        controls_layout.setContentsMargins(14, 12, 14, 12)
+        controls_layout.setSpacing(8)
+
+        heading_box = QVBoxLayout()
+        heading_box.setSpacing(1)
+        heading = QLabel("Sequência de testes")
+        heading.setObjectName("sectionTitle")
+        hint = QLabel("Adicione e edite somente as etapas necessárias para este plano.")
+        hint.setObjectName("sectionHint")
+        heading_box.addWidget(heading)
+        heading_box.addWidget(hint)
+        controls_layout.addLayout(heading_box, 1)
+
+        self.add_step_button = QPushButton("Adicionar etapa")
+        self.add_step_button.setObjectName("btnPrimary")
+        self.add_step_button.setMinimumHeight(36)
         self.add_step_button.clicked.connect(self.add_step)
-        
-        self.edit_step_button = QPushButton("✏️ Editar Etapa")
-        self.edit_step_button.setMinimumHeight(35)
+
+        self.edit_step_button = QPushButton("Editar")
+        self.edit_step_button.setObjectName("btnSecondary")
+        self.edit_step_button.setMinimumHeight(36)
         self.edit_step_button.clicked.connect(self.edit_step)
         self.edit_step_button.setEnabled(False)
-        
-        self.delete_step_button = QPushButton("🗑️ Excluir Etapa")
-        self.delete_step_button.setMinimumHeight(35)
+
+        self.delete_step_button = QPushButton("Excluir")
+        self.delete_step_button.setObjectName("btnDanger")
+        self.delete_step_button.setMinimumHeight(36)
         self.delete_step_button.clicked.connect(self.delete_step)
         self.delete_step_button.setEnabled(False)
-        
-        self.move_up_button = QPushButton("⬆️")
-        self.move_up_button.setMaximumWidth(40)
-        self.move_up_button.clicked.connect(self.move_step_up)
-        self.move_up_button.setEnabled(False)
-        
-        self.move_down_button = QPushButton("⬇️")
-        self.move_down_button.setMaximumWidth(40)
-        self.move_down_button.clicked.connect(self.move_step_down)
-        self.move_down_button.setEnabled(False)
-        
+
+        # Os controles subir/descer não eram funcionais; foram retirados da UI.
+        self.move_up_button = None
+        self.move_down_button = None
+
         controls_layout.addWidget(self.add_step_button)
         controls_layout.addWidget(self.edit_step_button)
         controls_layout.addWidget(self.delete_step_button)
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.move_up_button)
-        controls_layout.addWidget(self.move_down_button)
-        
-        layout.addLayout(controls_layout)
-        
-        # Tabela de etapas
+        layout.addWidget(toolbar)
+
         self.step_table = QTableWidget()
+        self.step_table.setObjectName("stepTable")
         self.step_table.setColumnCount(6)
         self.step_table.setHorizontalHeaderLabels([
             "Ordem", "Descrição", "Unidade", "Desejado", "Tolerância", "Ponto"
         ])
-        
-        # Configurar cabeçalho
         header = self.step_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Ordem
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Descrição
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Unidade
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Desejado
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Tolerância
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # Ponto
-        
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.step_table.verticalHeader().setVisible(False)
+        self.step_table.setAlternatingRowColors(True)
+        self.step_table.setShowGrid(False)
         self.step_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.step_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.step_table.cellClicked.connect(self.on_step_selected)
         self.step_table.cellDoubleClicked.connect(self.edit_step)
-        
-        layout.addWidget(self.step_table)
-        
-        # Estatísticas
-        stats_layout = QHBoxLayout()
+        layout.addWidget(self.step_table, 1)
+
+        footer = QHBoxLayout()
         self.stats_label = QLabel("Total de etapas: 0")
-        self.stats_label.setStyleSheet("color: #7F8C8D; font-size: 12px;")
-        stats_layout.addWidget(self.stats_label)
-        stats_layout.addStretch()
-        
-        layout.addLayout(stats_layout)
-        
-        widget.setLayout(layout)
+        self.stats_label.setObjectName("tableSummary")
+        footer.addWidget(self.stats_label)
+        footer.addStretch()
+        footer.addWidget(QLabel("Duplo clique em uma etapa para editar."))
+        layout.addLayout(footer)
         return widget
-        
+
     def create_settings_tab(self):
-        """Cria aba de configurações do plano"""
+        """Informações e estado do plano, sem elementos decorativos extras."""
         widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        
-        # Informações básicas
-        basic_group = QGroupBox("Informações do Plano")
-        basic_layout = QFormLayout()
-        
+        widget.setObjectName("settingsTab")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        basic_group = QGroupBox("Informações do plano")
+        basic_group.setObjectName("settingsGroup")
+        basic_layout = QFormLayout(basic_group)
+        basic_layout.setContentsMargins(18, 18, 18, 18)
+        basic_layout.setHorizontalSpacing(18)
+        basic_layout.setVerticalSpacing(12)
+
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Ex: Teste Completo, Validação Inicial...")
+        self.name_input.setPlaceholderText("Ex: Teste completo")
         self.set_field_style(self.name_input)
-        basic_layout.addRow("Nome do Plano:*", self.name_input)
-        
+        basic_layout.addRow("Nome *", self.name_input)
+
         self.version_input = QLineEdit()
-        self.version_input.setPlaceholderText("Ex: 1.0, 2.1, 2024.1")
+        self.version_input.setPlaceholderText("Ex: 1.0")
         self.set_field_style(self.version_input)
-        basic_layout.addRow("Versão:*", self.version_input)
-        
+        basic_layout.addRow("Versão *", self.version_input)
+
         self.description_input = QTextEdit()
-        self.description_input.setPlaceholderText("Descreva o propósito e escopo deste plano de teste...")
-        self.description_input.setMaximumHeight(100)
-        self.description_input.setStyleSheet("""
-            QTextEdit {
-                border: 2px solid #BDC3C7;
-                border-radius: 5px;
-                padding: 6px 10px;
-                font-size: 13px;
-                background-color: white;
-                color: #1E293B;
-            }
-            QTextEdit:focus {
-                border-color: #0284C7;
-                color: #1E293B;
-            }
-        """)
-        basic_layout.addRow("Descrição:", self.description_input)
-        
-        basic_group.setLayout(basic_layout)
+        self.description_input.setPlaceholderText(
+            "Descreva o propósito e o escopo deste plano de teste..."
+        )
+        self.description_input.setMaximumHeight(120)
+        basic_layout.addRow("Descrição", self.description_input)
         layout.addWidget(basic_group)
-        
-        # Configurações
-        config_group = QGroupBox("Configurações")
-        config_layout = QVBoxLayout()
-        
-        self.active_checkbox = QCheckBox("Plano ativo")
+
+        config_group = QGroupBox("Disponibilidade")
+        config_group.setObjectName("settingsGroup")
+        config_layout = QVBoxLayout(config_group)
+        config_layout.setContentsMargins(18, 16, 18, 16)
+        self.active_checkbox = QCheckBox("Plano ativo e disponível para execução")
         self.active_checkbox.setChecked(True)
-        self.active_checkbox.setStyleSheet("color: #1E293B; font-weight: 500; font-size: 13px;")
         self.active_checkbox.setToolTip("Planos inativos não aparecem para execução")
         config_layout.addWidget(self.active_checkbox)
-        
-        config_group.setLayout(config_layout)
         layout.addWidget(config_group)
-        
         layout.addStretch()
-        
-        widget.setLayout(layout)
         return widget
-        
+
     def apply_styles(self):
-        """Aplica estilos aos componentes"""
-        button_style = """
-            QPushButton {
-                background-color: #0284C7;
-                color: white;
-                border: 1px solid #0369A1;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
+        """Mantém a paleta do projeto e aproxima o editor do dashboard."""
+        self.setStyleSheet("""
+            QWidget#planEditorRoot { background-color: #F4F7F9; color: #0F172A; }
+            QFrame#editorHeader {
+                background-color: #0F172A; border-radius: 12px;
             }
-            QPushButton:hover {
-                background-color: #0369A1;
+            QLabel#editorTitle {
+                color: #FFFFFF; font-size: 19px; font-weight: 700; background: transparent;
             }
-            QPushButton:pressed {
-                background-color: #075985;
+            QLabel#editorSubtitle {
+                color: #CBD5E1; font-size: 11px; background: transparent;
             }
+            QPushButton#headerPrimary {
+                background-color: #0F766E; color: #FFFFFF;
+                border: 1px solid #14B8A6; border-radius: 8px;
+                padding: 8px 16px; font-weight: 700;
+            }
+            QPushButton#headerPrimary:hover { background-color: #0D9488; }
+            QPushButton#headerSecondary {
+                background-color: #1E293B; color: #E2E8F0;
+                border: 1px solid #475569; border-radius: 8px;
+                padding: 8px 14px; font-weight: 600;
+            }
+            QPushButton#headerSecondary:hover { background-color: #334155; }
+
+            QTabWidget#editorTabs::pane {
+                background-color: #FFFFFF; border: 1px solid #E2E8F0;
+                border-radius: 10px; top: -1px;
+            }
+            QTabWidget#editorTabs QTabBar::tab {
+                background-color: transparent; color: #64748B;
+                padding: 10px 16px; margin-right: 4px;
+                border-bottom: 2px solid transparent; font-weight: 600;
+            }
+            QTabWidget#editorTabs QTabBar::tab:selected {
+                color: #0F766E; border-bottom: 2px solid #0F766E;
+            }
+
+            QFrame#editorCard {
+                background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px;
+            }
+            QLabel#sectionTitle { color: #0F172A; font-size: 14px; font-weight: 700; }
+            QLabel#sectionHint, QLabel#tableSummary {
+                color: #64748B; font-size: 11px;
+            }
+            QPushButton#btnPrimary {
+                background-color: #0F766E; color: #FFFFFF;
+                border: 1px solid #0D9488; border-radius: 8px;
+                padding: 7px 14px; font-weight: 700;
+            }
+            QPushButton#btnPrimary:hover { background-color: #0D9488; }
+            QPushButton#btnSecondary {
+                background-color: #F1F5F9; color: #334155;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 7px 14px; font-weight: 600;
+            }
+            QPushButton#btnSecondary:hover { background-color: #E2E8F0; }
+            QPushButton#btnDanger {
+                background-color: #FEF2F2; color: #B91C1C;
+                border: 1px solid #FCA5A5; border-radius: 8px;
+                padding: 7px 14px; font-weight: 700;
+            }
+            QPushButton#btnDanger:hover { background-color: #FEE2E2; }
             QPushButton:disabled {
-                background-color: #CBD5E1;
-                color: #64748B;
-                border: 1px solid #94A3B8;
+                background-color: #F1F5F9; color: #94A3B8; border: 1px solid #E2E8F0;
             }
-        """
-        
-        self.add_step_button.setStyleSheet(button_style)
-        self.edit_step_button.setStyleSheet(button_style)
-        self.delete_step_button.setStyleSheet("""
-            QPushButton {
-                background-color: #EF4444;
-                color: white;
-                border: 1px solid #DC2626;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
+
+            QTableWidget#stepTable {
+                background-color: #FFFFFF; alternate-background-color: #F8FAFC;
+                color: #0F172A; border: 1px solid #E2E8F0;
+                border-radius: 9px; gridline-color: transparent; outline: 0;
             }
-            QPushButton:hover {
-                background-color: #DC2626;
-            }
-            QPushButton:disabled {
-                background-color: #CBD5E1;
-                color: #64748B;
-                border: 1px solid #94A3B8;
-            }
-        """)
-        self.save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #10B981;
-                color: white;
-                border: 1px solid #059669;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-            QPushButton:pressed {
-                background-color: #047857;
-            }
-            QPushButton:disabled {
-                background-color: #CBD5E1;
-                color: #64748B;
-                border: 1px solid #94A3B8;
-            }
-        """)
-        
-        self.close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #94A3B8;
-                color: white;
-                border: 1px solid #64748B;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #64748B;
-            }
-        """)
-        
-        self.move_up_button.setStyleSheet(button_style)
-        self.move_down_button.setStyleSheet(button_style)
-        
-        self.step_table.setStyleSheet("""
-            QTableWidget {
-                background-color: white;
-                color: #1E293B;
-                border: 1px solid #BDC3C7;
-                border-radius: 5px;
-                gridline-color: #ECF0F1;
-            }
-            QTableWidget::item {
-                padding: 8px;
-                color: #1E293B;
-                border-bottom: 1px solid #ECF0F1;
-            }
-            QTableWidget::item:selected {
-                background-color: #0284C7;
-                color: white;
-            }
+            QTableWidget#stepTable::item { padding: 8px; border-bottom: 1px solid #F1F5F9; }
+            QTableWidget#stepTable::item:selected { background-color: #E0F2FE; color: #0F172A; }
             QHeaderView::section {
-                background-color: #1E293B;
-                color: white;
-                padding: 8px;
-                border: none;
-                font-weight: bold;
+                background-color: #F8FAFC; color: #475569;
+                border: none; border-bottom: 1px solid #E2E8F0;
+                padding: 9px 8px; font-size: 11px; font-weight: 700;
+            }
+
+            QGroupBox#settingsGroup {
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #E2E8F0; border-radius: 10px;
+                margin-top: 12px; font-weight: 700;
+            }
+            QGroupBox#settingsGroup::title {
+                subcontrol-origin: margin; left: 14px; padding: 0 6px;
+            }
+            QLineEdit, QTextEdit {
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 8px 10px; font-size: 13px;
+                selection-background-color: #0284C7; selection-color: #FFFFFF;
+            }
+            QLineEdit:focus, QTextEdit:focus { border: 1px solid #0284C7; }
+            QCheckBox { color: #334155; font-size: 12px; spacing: 7px; }
+            QLabel#editorStatus {
+                color: #64748B; font-size: 11px; padding: 2px 4px; background: transparent;
             }
         """)
-        
+
     def set_field_style(self, field):
-        """Aplica estilo consistente aos campos"""
+        """Mantido para compatibilidade; os campos usam o estilo central do editor."""
         if isinstance(field, QLineEdit):
-            field.setStyleSheet("""
-                QLineEdit {
-                    border: 2px solid #BDC3C7;
-                    border-radius: 5px;
-                    padding: 8px 12px;
-                    font-size: 14px;
-                    background-color: white;
-                    color: #1E293B;
-                    selection-background-color: #0284C7;
-                    selection-color: white;
-                }
-                QLineEdit:focus {
-                    border-color: #0284C7;
-                    background-color: #F8FAFC;
-                    color: #1E293B;
-                }
-            """)
-            
+            field.setProperty("error", "false")
+
     def create_plan(self):
         """Cria um novo plano"""
         dialog = QDialog(self)
@@ -765,13 +722,11 @@ class PlanEditor(QWidget):
         self.stats_label.setText(f"Total de etapas: {len(steps)}")
         
     def on_step_selected(self, row, column):
-        """Handle step selection"""
+        """Atualiza as ações disponíveis para a etapa selecionada."""
         has_selection = row >= 0
         self.edit_step_button.setEnabled(has_selection)
         self.delete_step_button.setEnabled(has_selection)
-        self.move_up_button.setEnabled(has_selection and row > 0)
-        self.move_down_button.setEnabled(has_selection and row < self.step_table.rowCount() - 1)
-        
+
     def add_step(self):
         """Adiciona nova etapa"""
         if not self.plan:

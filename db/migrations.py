@@ -47,6 +47,7 @@ def migrate():
             tolerance_current_a FLOAT,
             tolerance_frequency_hz FLOAT,
             notes TEXT,
+            marker_color VARCHAR(7) NOT NULL DEFAULT '#E53935',
             created_at DATETIME NOT NULL,
             board_id INTEGER NOT NULL,
             FOREIGN KEY(board_id) REFERENCES board_units (id)
@@ -55,8 +56,8 @@ def migrate():
         
         # Copy data
         cursor.execute("""
-        INSERT INTO test_points_new (id, refdes, x, y, expected_voltage_v, expected_current_a, expected_frequency_hz, expected_waveform, tolerance_voltage_v, tolerance_current_a, tolerance_frequency_hz, notes, created_at, board_id)
-        SELECT id, refdes, x, y, expected_voltage_v, expected_current_a, expected_frequency_hz, expected_waveform, tolerance_voltage_v, tolerance_current_a, tolerance_frequency_hz, notes, created_at, board_id
+        INSERT INTO test_points_new (id, refdes, x, y, expected_voltage_v, expected_current_a, expected_frequency_hz, expected_waveform, tolerance_voltage_v, tolerance_current_a, tolerance_frequency_hz, notes, marker_color, created_at, board_id)
+        SELECT id, refdes, x, y, expected_voltage_v, expected_current_a, expected_frequency_hz, expected_waveform, tolerance_voltage_v, tolerance_current_a, tolerance_frequency_hz, notes, '#E53935', created_at, board_id
         FROM test_points
         """)
         

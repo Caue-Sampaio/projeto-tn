@@ -570,10 +570,20 @@ class TestExecutor(QWidget):
         self.btn_select_plan.setToolTip("Seleciona um plano compatível com a placa.")
         self.btn_select_plan.clicked.connect(self.select_plan)
 
+        # Criar e selecionar são ações distintas. A criação fica no próprio
+        # bloco de plano para não se misturar com a edição.
+        self.btn_create_plan = QPushButton("＋ Criar plano")
+        self.btn_create_plan.setObjectName("secondaryButton")
+        self.btn_create_plan.setFixedHeight(40)
+        self.btn_create_plan.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_create_plan.setToolTip("Cria um novo plano para a placa selecionada.")
+        self.btn_create_plan.clicked.connect(self.open_plan_creator)
+
         plan_layout.addWidget(caption)
         plan_layout.addWidget(self.lbl_plan)
         plan_layout.addWidget(self.lbl_plan_meta)
         plan_layout.addWidget(self.btn_select_plan)
+        plan_layout.addWidget(self.btn_create_plan)
         layout.addWidget(plan_box)
 
         # Ação principal
@@ -589,11 +599,11 @@ class TestExecutor(QWidget):
         self.btn_map_points.clicked.connect(self.open_image_marker_edit)
         layout.addWidget(self.btn_map_points)
 
-        self.btn_plan_editor = QPushButton("📋 Criar / Editar Plano")
+        self.btn_plan_editor = QPushButton("✏️ Editar Plano")
         self.btn_plan_editor.setObjectName("secondaryButton")
         self.btn_plan_editor.setFixedHeight(40)
         self.btn_plan_editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.btn_plan_editor.setToolTip("Abre o editor de planos de teste.")
+        self.btn_plan_editor.setToolTip("Edita somente o plano de teste selecionado.")
         self.btn_plan_editor.clicked.connect(self.open_plan_editor)
         layout.addWidget(self.btn_plan_editor)
 
@@ -1204,6 +1214,7 @@ class TestExecutor(QWidget):
         enabled = not self.is_test_running
         self.btn_select_board.setEnabled(enabled)
         self.btn_select_plan.setEnabled(enabled)
+        self.btn_create_plan.setEnabled(enabled)
         self.btn_start_test.setEnabled(enabled)
         self.btn_export_report.setEnabled(enabled)
         self.btn_map_points.setEnabled(enabled)
@@ -1293,6 +1304,7 @@ class TestExecutor(QWidget):
         # Fora da execução, todos voltam a responder ao clique.
         self.btn_select_board.setEnabled(enabled)
         self.btn_select_plan.setEnabled(enabled)
+        self.btn_create_plan.setEnabled(enabled)
         self.btn_start_test.setEnabled(enabled)
         self.btn_export_report.setEnabled(enabled)
         self.btn_map_points.setEnabled(enabled)
@@ -1570,15 +1582,55 @@ class TestExecutor(QWidget):
         if refresh and self.selected_board is not None:
             self.load_board_preview()
 
-    def open_plan_editor(self):
+    def open_plan_creator(self):
+        """Cria um novo plano para a placa selecionada."""
         if not self.selected_board:
-            QMessageBox.warning(self, "Aviso", "Selecione uma placa antes de editar o plano.")
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                "Selecione uma placa antes de criar um plano.",
+            )
+            return
+
+        self.create_plan_window = PlanEditor(
+            self.session,
+            self.selected_board,
+        )
+        self.create_plan_window.plan_saved.connect(self._on_plan_saved_from_editor)
+        self.create_plan_window.show()
+        self.create_plan_window.raise_()
+        self.create_plan_window.activateWindow()
+
+    def open_plan_editor(self):
+        """Edita exclusivamente o plano atualmente selecionado."""
+        if not self.selected_board:
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                "Selecione uma placa antes de editar um plano.",
+            )
+            return
+
+        if not self.selected_plan:
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                "Selecione um plano antes de editar.",
+            )
             return
 
         self.editor_window = PlanEditor(
             self.session,
-            self.selected_board
+            self.selected_board,
+            self.selected_plan,
         )
+        self.editor_window.plan_saved.connect(self._on_plan_saved_from_editor)
         self.editor_window.show()
         self.editor_window.raise_()
         self.editor_window.activateWindow()
+
+    def _on_plan_saved_from_editor(self, plan):
+        """Atualiza o plano mostrado no painel após criar ou editar."""
+        if plan is None:
+            return
+        self.set_selected_plan(plan)

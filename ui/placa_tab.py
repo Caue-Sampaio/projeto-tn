@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QTabWidget, QTextEdit, QComboBox, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QFrame,
     QProgressBar, QInputDialog, QListWidgetItem, QCheckBox, QSizePolicy, QGridLayout,
-    QTreeWidget, QTreeWidgetItem, QScrollArea
+    QTreeWidget, QTreeWidgetItem, QScrollArea, QStyledItemDelegate
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QPixmap, QBrush, QColor, QIcon
@@ -33,6 +33,27 @@ def clear_layout(layout):
         elif item.layout() is not None:
             clear_layout(item.layout())
             item.layout().deleteLater()
+
+
+class CleanCellEditDelegate(QStyledItemDelegate):
+    """Editor inline com margem real dentro da célula.
+
+    O editor padrão do Qt ocupa todo o retângulo do item e, combinado com o
+    padding da tabela, pode parecer cortado/fora de alinhamento. Este delegate
+    mantém o campo alguns pixels para dentro da célula e preserva a mesma
+    linguagem visual do restante da interface.
+    """
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.setObjectName("pointsInlineEditor")
+            editor.setMinimumHeight(30)
+        return editor
+
+    def updateEditorGeometry(self, editor, option, index):
+        # Mantém o editor totalmente dentro da linha, evitando clipping.
+        editor.setGeometry(option.rect.adjusted(4, 4, -4, -4))
 
 
 class ImagePreviewLabel(QLabel):
@@ -561,59 +582,55 @@ class BoardDetailsDialog(QDialog):
         self.apply_styles()
         
     def setup_ui(self):
-        """Configura a interface do usuário"""
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Cabeçalho
-        header_layout = self.create_header()
-        layout.addLayout(header_layout)
-        
-        # Abas
+        """Detalhes da placa em uma janela limpa, com navegação por abas."""
+        self.setObjectName("boardDetailsDialog")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(12)
+
+        layout.addWidget(self.create_header())
+
         self.tab_widget = QTabWidget()
-        
-        # Aba de informações
-        info_tab = self.create_info_tab()
-        self.tab_widget.addTab(info_tab, "📋 Informações")
-        
-        # Aba de pontos de teste
-        points_tab = self.create_points_tab()
-        self.tab_widget.addTab(points_tab, "📍 Pontos de Teste")
-        
-        # Aba de histórico
-        history_tab = self.create_history_tab()
-        self.tab_widget.addTab(history_tab, "📊 Histórico")
-        
-        # Aba de imagens
-        images_tab = self.create_images_tab()
-        self.tab_widget.addTab(images_tab, "🖼️ Imagens")
-        
-        layout.addWidget(self.tab_widget)
-        
-        # Botões
+        self.tab_widget.setObjectName("boardDetailsTabs")
+        self.tab_widget.setDocumentMode(True)
+        self.tab_widget.addTab(self.create_info_tab(), "Informações")
+        self.tab_widget.addTab(self.create_points_tab(), "Pontos de teste")
+        self.tab_widget.addTab(self.create_history_tab(), "Histórico")
+        self.tab_widget.addTab(self.create_images_tab(), "Imagens")
+        layout.addWidget(self.tab_widget, 1)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
+        close_btn = buttons.button(QDialogButtonBox.StandardButton.Close)
+        close_btn.setText("Fechar")
+        close_btn.setObjectName("detailsClose")
         layout.addWidget(buttons)
-        
-        self.setLayout(layout)
-        
+
     def create_header(self):
-        """Cria cabeçalho do dialog"""
-        layout = QVBoxLayout()
-        
+        """Cabeçalho contextual da placa."""
+        frame = QFrame()
+        frame.setObjectName("boardDetailsHeader")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(12)
+
+        info = QVBoxLayout()
+        info.setSpacing(3)
         self.title_label = QLabel(self.board.name)
-        self.title_label.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        self.title_label.setStyleSheet("color: #2C3E50;")
-        
-        self.subtitle_label = QLabel(f"Modelo: {self.board.model} | S/N: {self.board.serial_number}")
-        self.subtitle_label.setStyleSheet("color: #7F8C8D; font-size: 14px;")
-        
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.subtitle_label)
-        
-        return layout
-        
+        self.title_label.setObjectName("boardDetailsTitle")
+        self.subtitle_label = QLabel(
+            f"{self.board.model}  •  S/N: {self.board.serial_number}"
+        )
+        self.subtitle_label.setObjectName("boardDetailsSubtitle")
+        info.addWidget(self.title_label)
+        info.addWidget(self.subtitle_label)
+        layout.addLayout(info, 1)
+
+        status = QLabel("ATIVA" if self.board.is_active else "INATIVA")
+        status.setObjectName("boardStatusActive" if self.board.is_active else "boardStatusInactive")
+        layout.addWidget(status, alignment=Qt.AlignmentFlag.AlignTop)
+        return frame
+
     def create_info_tab(self):
         """Cria aba de informações"""
         widget = QWidget()
@@ -682,7 +699,14 @@ class BoardDetailsDialog(QDialog):
         self.points_table.setHorizontalHeaderLabels([
             "RefDes", "X", "Y", "Tensão Esperada", "Corrente Esperada"
         ])
-        
+
+        # O editor padrão do QTableWidget ficava visualmente quebrado ao
+        # entrar em edição. O delegate abaixo corrige a geometria do campo sem
+        # alterar a lógica de edição já existente.
+        self.points_table.setItemDelegate(CleanCellEditDelegate(self.points_table))
+        self.points_table.verticalHeader().setDefaultSectionSize(40)
+        self.points_table.verticalHeader().setMinimumSectionSize(40)
+
         # Configurar cabeçalho
         header = self.points_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # RefDes
@@ -786,55 +810,70 @@ class BoardDetailsDialog(QDialog):
             self.dialog_preview.show_message("Arquivo não encontrado:\n" + str(stored))
 
     def apply_styles(self):
-        """Aplica estilos aos componentes"""
+        """Aplica a mesma paleta do restante do programa."""
         self.setStyleSheet("""
-            QDialog {
-                background-color: #F8F9FA;
-                color: #1E293B;
+            QDialog#boardDetailsDialog { background-color: #F4F7F9; color: #0F172A; }
+            QFrame#boardDetailsHeader { background-color: #0F172A; border-radius: 10px; }
+            QLabel#boardDetailsTitle { color: #FFFFFF; font-size: 18px; font-weight: 700; }
+            QLabel#boardDetailsSubtitle { color: #CBD5E1; font-size: 11px; }
+            QLabel#boardStatusActive {
+                background-color: #134E4A; color: #CCFBF1;
+                border: 1px solid #2DD4BF; border-radius: 8px;
+                padding: 4px 9px; font-size: 10px; font-weight: 700;
             }
-            QLabel {
-                color: #1E293B;
+            QLabel#boardStatusInactive {
+                background-color: #1E293B; color: #CBD5E1;
+                border: 1px solid #475569; border-radius: 8px;
+                padding: 4px 9px; font-size: 10px; font-weight: 700;
+            }
+            QTabWidget#boardDetailsTabs::pane {
+                background-color: #FFFFFF; border: 1px solid #E2E8F0;
+                border-radius: 9px; top: -1px;
+            }
+            QTabWidget#boardDetailsTabs QTabBar::tab {
+                color: #64748B; padding: 9px 14px; margin-right: 3px;
+                border-bottom: 2px solid transparent; font-weight: 600;
+            }
+            QTabWidget#boardDetailsTabs QTabBar::tab:selected {
+                color: #0F766E; border-bottom: 2px solid #0F766E;
             }
             QGroupBox {
-                font-weight: bold;
-                border: 2px solid #BDC3C7;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: #1E293B;
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #E2E8F0; border-radius: 9px;
+                margin-top: 12px; font-weight: 700;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: #1E293B;
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }
+            QLabel { color: #334155; }
+            QTableWidget, QListWidget {
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #E2E8F0; border-radius: 8px; outline: 0;
             }
-            QTableWidget {
-                border: 1px solid #BDC3C7;
-                border-radius: 5px;
-                background-color: white;
-                color: #1E293B;
+            QTableWidget::item, QListWidget::item { padding: 7px; }
+            QTableWidget::item:selected, QListWidget::item:selected {
+                background-color: #E0F2FE; color: #0F172A;
             }
-            QListWidget {
-                border: 1px solid #BDC3C7;
-                border-radius: 5px;
-                background-color: white;
-                color: #1E293B;
+            QLineEdit#pointsInlineEditor {
+                background-color: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #0F766E;
+                border-radius: 6px;
+                padding: 3px 8px;
+                selection-background-color: #CCFBF1;
+                selection-color: #0F172A;
             }
-            QDialogButtonBox QPushButton {
-                background-color: #0284C7;
-                color: white;
-                border: 1px solid #0369A1;
-                border-radius: 5px;
-                padding: 8px 20px;
-                font-weight: bold;
-                min-width: 90px;
+            QHeaderView::section {
+                background-color: #F8FAFC; color: #475569;
+                border: none; border-bottom: 1px solid #E2E8F0;
+                padding: 8px; font-size: 11px; font-weight: 700;
             }
-            QDialogButtonBox QPushButton:hover {
-                background-color: #0369A1;
+            QPushButton#detailsClose {
+                background-color: #F1F5F9; color: #334155;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 8px 16px; font-weight: 600; min-width: 90px;
             }
+            QPushButton#detailsClose:hover { background-color: #E2E8F0; }
         """)
-        
+
     def load_board_data(self):
         """Carrega dados da placa"""
         # Já carregado durante a criação da UI
@@ -889,162 +928,123 @@ class PlacaTab(QWidget):
     # CABEÇALHO (banner com resumo)
     # ------------------------------------------------------------------
     def create_header(self):
-        banner = QFrame()
-        banner.setObjectName("banner")
-        row = QHBoxLayout(banner)
-        row.setContentsMargins(28, 20, 28, 20)
-        row.setSpacing(18)
+        """Cabeçalho compacto, no mesmo padrão visual do dashboard."""
+        header = QFrame()
+        header.setObjectName("placaHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(20, 16, 20, 16)
+        row.setSpacing(14)
 
         text_box = QVBoxLayout()
-        text_box.setSpacing(4)
-
-        title = QLabel("Gerenciamento de Placas")
-        title.setObjectName("bannerTitle")
-        subtitle = QLabel("Cadastre as máquinas e organize as placas de cada uma")
-        subtitle.setObjectName("bannerSub")
-
-        user = QLabel(f"👤  {self.current_user.username if self.current_user else 'N/A'}")
-        user.setObjectName("userChip")
-        chip_row = QHBoxLayout()
-        chip_row.addWidget(user)
-        chip_row.addStretch()
-
+        text_box.setSpacing(3)
+        title = QLabel("Placas e máquinas")
+        title.setObjectName("placaTitle")
+        subtitle = QLabel("Organize as placas, imagens e vínculos com as máquinas")
+        subtitle.setObjectName("placaSubtitle")
+        operator = QLabel(
+            f"Operador: {self.current_user.username if self.current_user else 'N/A'}"
+        )
+        operator.setObjectName("placaOperator")
         text_box.addWidget(title)
         text_box.addWidget(subtitle)
-        text_box.addSpacing(6)
-        text_box.addLayout(chip_row)
+        text_box.addWidget(operator)
         row.addLayout(text_box, 1)
 
-        for caption, attr in (("MÁQUINAS", "stat_machines"), ("PLACAS", "stat_boards"), ("ATIVAS", "stat_active")):
+        for caption, attr in (
+            ("MÁQUINAS", "stat_machines"),
+            ("PLACAS", "stat_boards"),
+            ("ATIVAS", "stat_active"),
+        ):
             chip = QFrame()
-            chip.setObjectName("statChip")
-            chip.setMinimumWidth(100)
+            chip.setObjectName("headerStat")
+            chip.setMinimumWidth(88)
             box = QVBoxLayout(chip)
-            box.setContentsMargins(16, 10, 16, 10)
+            box.setContentsMargins(12, 7, 12, 7)
             box.setSpacing(0)
-
             value = QLabel("0")
-            value.setObjectName("statValue")
+            value.setObjectName("headerStatValue")
             value.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label = QLabel(caption)
-            label.setObjectName("statCaption")
+            label.setObjectName("headerStatLabel")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
             box.addWidget(value)
             box.addWidget(label)
             setattr(self, attr, value)
             row.addWidget(chip)
+        return header
 
-        return banner
-
-    # ------------------------------------------------------------------
-    # COLUNA ESQUERDA: máquinas/placas + cadastro de placa
-    # ------------------------------------------------------------------
     def create_left_panel(self):
+        """Lista de máquinas/placas e ações relacionadas à seleção atual."""
         container = QWidget()
         container.setObjectName("leftColumn")
-        container.setMinimumWidth(430)
+        container.setMinimumWidth(420)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 6, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
-        # ============ Cartão: máquinas e placas ============
-        tree_card = QFrame()
-        tree_card.setObjectName("card")
-        tc = QVBoxLayout(tree_card)
-        tc.setContentsMargins(18, 16, 18, 16)
-        tc.setSpacing(12)
+        card = QFrame()
+        card.setObjectName("card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(16, 16, 16, 16)
+        box.setSpacing(12)
 
         head = QHBoxLayout()
-        head.setSpacing(10)
+        head.setSpacing(8)
         title_box = QVBoxLayout()
         title_box.setSpacing(1)
-        card_title = QLabel("🏭  Máquinas e placas")
+        card_title = QLabel("Máquinas e placas")
         card_title.setObjectName("cardTitle")
         self.machine_count_label = QLabel("Nenhuma máquina cadastrada")
         self.machine_count_label.setObjectName("cardSub")
         title_box.addWidget(card_title)
         title_box.addWidget(self.machine_count_label)
-        head.addLayout(title_box)
-        head.addStretch()
+        head.addLayout(title_box, 1)
 
-        self.add_machine_btn = QPushButton("➕  Máquina")
-        self.add_machine_btn.setObjectName("btnPrimary")
-        self.add_machine_btn.setMinimumHeight(40)
+        self.add_machine_btn = QPushButton("Nova máquina")
+        self.add_machine_btn.setObjectName("btnSecondary")
+        self.add_machine_btn.setMinimumHeight(36)
         self.add_machine_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_machine_btn.clicked.connect(self.add_machine)
         head.addWidget(self.add_machine_btn)
 
-        self.add_board_btn = QPushButton("➕  Placa")
-        self.add_board_btn.setObjectName("btnBlue")
-        self.add_board_btn.setMinimumHeight(40)
-        self.add_board_btn.setToolTip("Cadastrar uma placa (já na máquina selecionada)")
+        self.add_board_btn = QPushButton("Nova placa")
+        self.add_board_btn.setObjectName("btnPrimary")
+        self.add_board_btn.setMinimumHeight(36)
+        self.add_board_btn.setToolTip("Cadastrar uma placa na máquina selecionada")
         self.add_board_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_board_btn.clicked.connect(lambda _checked=False: self.add_board_dialog())
         head.addWidget(self.add_board_btn)
-        tc.addLayout(head)
+        box.addLayout(head)
 
         search_row = QHBoxLayout()
-        search_row.setSpacing(12)
+        search_row.setSpacing(10)
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍  Buscar máquina ou placa...")
+        self.search_input.setPlaceholderText("Buscar máquina ou placa...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self.filter_boards)
-
         self.active_only_cb = QCheckBox("Apenas ativas")
         self.active_only_cb.setObjectName("activeOnly")
         self.active_only_cb.setChecked(True)
         self.active_only_cb.toggled.connect(self.filter_boards)
-
         search_row.addWidget(self.search_input, 1)
         search_row.addWidget(self.active_only_cb)
-        tc.addLayout(search_row)
+        box.addLayout(search_row)
 
         self.board_tree = QTreeWidget()
         self.board_tree.setObjectName("boardTree")
         self.board_tree.setHeaderHidden(True)
-        self.board_tree.setMinimumHeight(260)
+        self.board_tree.setMinimumHeight(280)
         self.board_tree.setAnimated(True)
-        self.board_tree.setIndentation(20)
-        self.board_tree.setIconSize(QSize(34, 34))
+        self.board_tree.setIndentation(18)
+        self.board_tree.setIconSize(QSize(32, 32))
         self.board_tree.setFrameShape(QFrame.Shape.NoFrame)
         self.board_tree.itemSelectionChanged.connect(self.on_board_selected)
         self.board_tree.itemDoubleClicked.connect(self.view_board_details)
-        tc.addWidget(self.board_tree, 1)
+        box.addWidget(self.board_tree, 1)
 
-        machine_actions = QHBoxLayout()
-        machine_actions.setSpacing(8)
-        machine_hint = QLabel("Máquina selecionada")
-        machine_hint.setObjectName("cardSub")
-
-        self.edit_machine_btn = QPushButton("✏️  Editar")
-        self.edit_machine_btn.setObjectName("btnGhost")
-        self.edit_machine_btn.setMinimumHeight(34)
-        self.edit_machine_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.edit_machine_btn.clicked.connect(self.edit_machine)
-        self.edit_machine_btn.setEnabled(False)
-
-        self.delete_machine_btn = QPushButton("🗑️  Excluir")
-        self.delete_machine_btn.setObjectName("btnDangerSoft")
-        self.delete_machine_btn.setMinimumHeight(34)
-        self.delete_machine_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_machine_btn.clicked.connect(self.delete_machine)
-        self.delete_machine_btn.setEnabled(False)
-
-        machine_actions.addWidget(machine_hint)
-        machine_actions.addStretch()
-        machine_actions.addWidget(self.edit_machine_btn)
-        machine_actions.addWidget(self.delete_machine_btn)
-        tc.addLayout(machine_actions)
-
-        divider = QFrame()
-        divider.setObjectName("divider")
-        divider.setFixedHeight(1)
-        tc.addWidget(divider)
-
-        board_hint = QLabel("Placa selecionada")
-        board_hint.setObjectName("cardSub")
-        tc.addWidget(board_hint)
+        action_title = QLabel("Ações da seleção")
+        action_title.setObjectName("sectionLabel")
+        box.addWidget(action_title)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
@@ -1053,26 +1053,42 @@ class PlacaTab(QWidget):
         def action_button(text, object_name, handler):
             button = QPushButton(text)
             button.setObjectName(object_name)
-            button.setMinimumHeight(38)
+            button.setMinimumHeight(36)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(handler)
             button.setEnabled(False)
             return button
 
-        self.details_btn = action_button("👁️  Detalhes", "btnBlue", self.view_board_details)
-        self.import_btn = action_button("📥  Importar para Teste", "btnPrimary", self.import_board)
-        self.move_btn = action_button("🔀  Mover de Máquina", "btnPurple", self.move_board)
-        self.delete_btn = action_button("🗑️  Excluir Placa", "btnDangerSoft", self.delete_board)
+        self.details_btn = action_button("Ver detalhes", "btnSecondary", self.view_board_details)
+        self.import_btn = action_button("Importar para teste", "btnPrimary", self.import_board)
+        self.move_btn = action_button("Mover placa", "btnSecondary", self.move_board)
+        self.delete_btn = action_button("Excluir placa", "btnDanger", self.delete_board)
+        self.edit_machine_btn = action_button("Editar máquina", "btnSecondary", self.edit_machine)
+        self.delete_machine_btn = action_button("Excluir máquina", "btnDanger", self.delete_machine)
+
+        # Ações contextuais: a interface mostra SOMENTE os controles do tipo
+        # de item selecionado. Isso evita manter ações de máquina visíveis
+        # quando o usuário está trabalhando em uma placa (e vice-versa).
+        self.board_action_buttons = [
+            self.details_btn, self.import_btn, self.move_btn, self.delete_btn
+        ]
+        self.machine_action_buttons = [
+            self.edit_machine_btn, self.delete_machine_btn
+        ]
 
         grid.addWidget(self.details_btn, 0, 0)
         grid.addWidget(self.import_btn, 0, 1)
         grid.addWidget(self.move_btn, 1, 0)
         grid.addWidget(self.delete_btn, 1, 1)
-        tc.addLayout(grid)
+        grid.addWidget(self.edit_machine_btn, 0, 0)
+        grid.addWidget(self.delete_machine_btn, 0, 1)
+        box.addLayout(grid)
 
-        layout.addWidget(tree_card, 1)
+        # Sem seleção não há ações da seleção para mostrar.
+        self.action_title = action_title
+        self._update_selection_actions(None)
+        layout.addWidget(card, 1)
 
-        # Área rolável: em janelas baixas aparece barra de rolagem em vez de sobrepor
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1086,9 +1102,6 @@ class PlacaTab(QWidget):
         scroll.setWidget(container)
         return scroll
 
-    # ------------------------------------------------------------------
-    # COLUNA DIREITA: detalhes da placa / máquina
-    # ------------------------------------------------------------------
     def create_right_panel(self):
         card = QFrame()
         card.setObjectName("card")
@@ -1137,160 +1150,106 @@ class PlacaTab(QWidget):
     # ESTILO DA ABA INTEIRA (todos os seletores são por nome: nada vaza para diálogos)
     # ------------------------------------------------------------------
     def apply_styles(self):
+        """Visual alinhado ao dashboard, preservando a paleta atual do projeto."""
         self.setStyleSheet("""
             QWidget#placaRoot { background-color: #F4F7F9; }
             QWidget#placaRoot QSplitter::handle { background: transparent; }
 
-            /* ---------- Banner ---------- */
-            QFrame#banner {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                            stop:0 #0F766E, stop:1 #0284C7);
-                border-radius: 16px;
+            QFrame#placaHeader { background-color: #0F172A; border-radius: 12px; }
+            QLabel#placaTitle { color: #FFFFFF; font-size: 19px; font-weight: 700; }
+            QLabel#placaSubtitle { color: #CBD5E1; font-size: 11px; }
+            QLabel#placaOperator { color: #94A3B8; font-size: 10px; }
+            QFrame#headerStat {
+                background-color: #1E293B; border: 1px solid #334155; border-radius: 8px;
             }
-            QLabel#bannerTitle {
-                color: #FFFFFF; font-size: 24px; font-weight: 700; background: transparent;
-            }
-            QLabel#bannerSub { color: #D9F2FF; font-size: 13px; background: transparent; }
-            QLabel#userChip {
-                background-color: rgba(255, 255, 255, 40);
-                color: #FFFFFF; border-radius: 11px;
-                padding: 4px 12px; font-size: 11px; font-weight: 600;
-            }
-            QFrame#statChip {
-                background-color: rgba(255, 255, 255, 38);
-                border: 1px solid rgba(255, 255, 255, 70);
-                border-radius: 12px;
-            }
-            QLabel#statValue {
-                color: #FFFFFF; font-size: 24px; font-weight: 700; background: transparent;
-            }
-            QLabel#statCaption {
-                color: #D1FAE5; font-size: 10px; font-weight: 700; background: transparent;
-            }
+            QLabel#headerStatValue { color: #FFFFFF; font-size: 19px; font-weight: 700; }
+            QLabel#headerStatLabel { color: #94A3B8; font-size: 9px; font-weight: 700; }
 
-            /* ---------- Cartões ---------- */
             QFrame#card {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
-                border-radius: 14px;
+                background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px;
             }
-            QLabel#cardTitle {
-                color: #0F172A; font-size: 15px; font-weight: 700; background: transparent;
-            }
-            QLabel#cardSub { color: #64748B; font-size: 11px; background: transparent; }
-            QFrame#divider { background-color: #E2E8F0; border: none; }
+            QLabel#cardTitle { color: #0F172A; font-size: 14px; font-weight: 700; }
+            QLabel#cardSub { color: #64748B; font-size: 11px; }
+            QLabel#sectionLabel { color: #475569; font-size: 10px; font-weight: 700; }
 
-            /* ---------- Campos ---------- */
             QFrame#card QLineEdit, QFrame#card QComboBox {
-                background-color: #F8FAFC; color: #0F172A;
-                border: 1.5px solid #CBD5E1; border-radius: 9px;
-                padding: 8px 12px; font-size: 13px;
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 8px 10px; font-size: 12px;
                 selection-background-color: #0284C7; selection-color: #FFFFFF;
             }
             QFrame#card QLineEdit:focus, QFrame#card QComboBox:focus {
-                border: 1.5px solid #0284C7; background-color: #FFFFFF;
+                border: 1px solid #0284C7;
             }
-            QFrame#card QComboBox QAbstractItemView {
-                background-color: #FFFFFF; color: #0F172A;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
-                border: 1px solid #CBD5E1; outline: 0;
-            }
-            QCheckBox#activeOnly { color: #334155; font-size: 12px; font-weight: 600; spacing: 6px; }
+            QCheckBox#activeOnly { color: #334155; font-size: 11px; spacing: 6px; }
 
-            /* ---------- Árvore de máquinas/placas ---------- */
             QTreeWidget#boardTree {
-                background-color: #F8FAFC; color: #0F172A;
-                border: 1px solid #E2E8F0; border-radius: 10px;
-                font-size: 13px; outline: 0; padding: 4px;
+                background-color: #FFFFFF; color: #0F172A;
+                border: 1px solid #E2E8F0; border-radius: 8px;
+                font-size: 12px; outline: 0; padding: 3px;
             }
             QTreeWidget#boardTree::item {
-                padding: 7px 6px; border-radius: 6px; margin: 1px 2px;
+                padding: 7px 5px; border-radius: 6px; margin: 1px 2px;
             }
-            QTreeWidget#boardTree::item:selected {
-                background-color: #0284C7; color: #FFFFFF;
-            }
-            QTreeWidget#boardTree::item:hover:!selected { background-color: #E0F2FE; }
+            QTreeWidget#boardTree::item:selected { background-color: #E0F2FE; color: #0F172A; }
+            QTreeWidget#boardTree::item:hover:!selected { background-color: #F8FAFC; }
 
-            /* ---------- Botões ---------- */
-            QPushButton#btnPrimary, QPushButton#btnBlue, QPushButton#btnPurple {
-                color: #FFFFFF; border-radius: 9px;
-                padding: 8px 16px; font-size: 13px; font-weight: 700;
+            QPushButton#btnPrimary {
+                background-color: #0F766E; color: #FFFFFF;
+                border: 1px solid #0D9488; border-radius: 8px;
+                padding: 7px 13px; font-size: 12px; font-weight: 700;
             }
-            QPushButton#btnPrimary { background-color: #0F766E; border: 1px solid #0D9488; }
             QPushButton#btnPrimary:hover { background-color: #0D9488; }
-            QPushButton#btnPrimary:pressed { background-color: #115E59; }
-            QPushButton#btnBlue { background-color: #0284C7; border: 1px solid #0369A1; }
-            QPushButton#btnBlue:hover { background-color: #0369A1; }
-            QPushButton#btnBlue:pressed { background-color: #075985; }
-            QPushButton#btnPurple { background-color: #7C3AED; border: 1px solid #6D28D9; }
-            QPushButton#btnPurple:hover { background-color: #6D28D9; }
-            QPushButton#btnPurple:pressed { background-color: #5B21B6; }
-            QPushButton#btnGhost {
-                background-color: #F1F5F9; color: #1E293B;
-                border: 1px solid #CBD5E1; border-radius: 9px;
-                padding: 7px 14px; font-size: 12px; font-weight: 600;
+            QPushButton#btnSecondary, QPushButton#btnGhost, QPushButton#btnBlue, QPushButton#btnPurple {
+                background-color: #F1F5F9; color: #334155;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 7px 13px; font-size: 12px; font-weight: 600;
             }
-            QPushButton#btnGhost:hover { background-color: #E2E8F0; }
-            QPushButton#btnDangerSoft {
+            QPushButton#btnSecondary:hover, QPushButton#btnGhost:hover,
+            QPushButton#btnBlue:hover, QPushButton#btnPurple:hover { background-color: #E2E8F0; }
+            QPushButton#btnDanger, QPushButton#btnDangerSoft {
                 background-color: #FEF2F2; color: #B91C1C;
-                border: 1px solid #FCA5A5; border-radius: 9px;
-                padding: 7px 14px; font-size: 12px; font-weight: 700;
+                border: 1px solid #FCA5A5; border-radius: 8px;
+                padding: 7px 13px; font-size: 12px; font-weight: 700;
             }
-            QPushButton#btnDangerSoft:hover { background-color: #FEE2E2; }
-            QPushButton#btnPrimary:disabled, QPushButton#btnBlue:disabled,
-            QPushButton#btnPurple:disabled, QPushButton#btnGhost:disabled,
-            QPushButton#btnDangerSoft:disabled {
+            QPushButton#btnDanger:hover, QPushButton#btnDangerSoft:hover { background-color: #FEE2E2; }
+            QPushButton:disabled {
                 background-color: #F1F5F9; color: #94A3B8; border: 1px solid #E2E8F0;
             }
 
-            /* ---------- Detalhes ---------- */
             QLabel#emptyState {
-                color: #64748B; font-size: 14px;
+                color: #64748B; font-size: 13px;
                 background-color: #F8FAFC;
-                border: 2px dashed #CBD5E1; border-radius: 14px; padding: 30px;
+                border: 1px dashed #CBD5E1; border-radius: 10px; padding: 28px;
             }
-            QLabel#detailTitle {
-                color: #0F172A; font-size: 22px; font-weight: 700; background: transparent;
-            }
+            QLabel#detailTitle { color: #0F172A; font-size: 20px; font-weight: 700; }
             QLabel#statusOn {
-                background-color: #DCFCE7; color: #15803D;
-                border-radius: 11px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+                background-color: #F0FDFA; color: #0F766E;
+                border: 1px solid #14B8A6; border-radius: 8px;
+                padding: 4px 9px; font-size: 10px; font-weight: 700;
             }
             QLabel#statusOff {
                 background-color: #F1F5F9; color: #64748B;
-                border-radius: 11px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+                border: 1px solid #CBD5E1; border-radius: 8px;
+                padding: 4px 9px; font-size: 10px; font-weight: 700;
             }
             QLabel#machineChip {
                 background-color: #E0F2FE; color: #0369A1;
-                border-radius: 11px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+                border-radius: 8px; padding: 4px 9px; font-size: 10px; font-weight: 700;
             }
             QFrame#infoTile {
-                background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px;
+                background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;
             }
-            QLabel#tileCaption {
-                color: #64748B; font-size: 10px; font-weight: 700; background: transparent;
-            }
-            QLabel#tileText {
-                color: #0F172A; font-size: 14px; font-weight: 600; background: transparent;
-            }
+            QLabel#tileCaption { color: #64748B; font-size: 9px; font-weight: 700; }
+            QLabel#tileText { color: #0F172A; font-size: 13px; font-weight: 600; }
             QFrame#statTile {
-                background-color: #F0FDFA; border: 1px solid #CCFBF1; border-radius: 10px;
+                background-color: #F0FDFA; border: 1px solid #CCFBF1; border-radius: 8px;
             }
-            QLabel#tileValue {
-                color: #0F766E; font-size: 22px; font-weight: 700; background: transparent;
-            }
-            QLabel#tileLabel {
-                color: #475569; font-size: 10px; font-weight: 700; background: transparent;
-            }
-            QLabel#sectionTitle {
-                color: #0F172A; font-size: 13px; font-weight: 700; background: transparent;
-            }
-            QLabel#descText {
-                color: #334155; font-size: 13px; background: transparent; padding: 1px 0px;
-            }
-            QLabel#statusText {
-                color: #64748B; font-size: 12px; padding: 2px 6px; background: transparent;
-            }
+            QLabel#tileValue { color: #0F766E; font-size: 19px; font-weight: 700; }
+            QLabel#tileLabel { color: #475569; font-size: 9px; font-weight: 700; }
+            QLabel#sectionTitle { color: #0F172A; font-size: 12px; font-weight: 700; }
+            QLabel#descText { color: #334155; font-size: 12px; }
+            QLabel#statusText { color: #64748B; font-size: 11px; padding: 2px 4px; }
         """)
 
     def _machine_icon(self, image_path):
@@ -1308,10 +1267,10 @@ class PlacaTab(QWidget):
         ))
 
     def show_machine_details(self, machine):
-        """Painel da direita quando uma MÁQUINA está selecionada."""
+        """Painel da direita quando uma máquina está selecionada."""
         clear_layout(self.details_layout)
 
-        title = QLabel(f"🏭  {machine.name}")
+        title = QLabel(machine.name)
         title.setObjectName("detailTitle")
         title.setWordWrap(True)
 
@@ -1325,7 +1284,7 @@ class PlacaTab(QWidget):
         chips = QHBoxLayout()
         chips.setSpacing(8)
         if machine.code:
-            chips.addWidget(chip(f"Código  {machine.code}"))
+            chips.addWidget(chip(f"Código {machine.code}"))
         chips.addWidget(chip(f"{len(boards)} placa(s)"))
         chips.addStretch()
 
@@ -1354,26 +1313,24 @@ class PlacaTab(QWidget):
         self.details_layout.addWidget(boards_title)
         if boards:
             for board in sorted(boards, key=lambda b: b.name.lower()):
-                status = "✅" if board.is_active else "⏸️"
-                line = QLabel(f"{status}  {board.name}   •   SN: {board.serial_number}")
+                state = "Ativa" if board.is_active else "Inativa"
+                line = QLabel(f"{board.name}  •  SN: {board.serial_number}  •  {state}")
                 line.setObjectName("descText")
                 self.details_layout.addWidget(line)
         else:
-            empty = QLabel("Nenhuma placa cadastrada nesta máquina ainda.")
+            empty = QLabel("Nenhuma placa cadastrada nesta máquina.")
             empty.setObjectName("descText")
             self.details_layout.addWidget(empty)
 
         actions = QHBoxLayout()
-        actions.setSpacing(10)
-        edit_btn = QPushButton("✏️  Editar máquina")
-        edit_btn.setObjectName("btnGhost")
-        edit_btn.setMinimumHeight(40)
-        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        actions.setSpacing(8)
+        edit_btn = QPushButton("Editar máquina")
+        edit_btn.setObjectName("btnSecondary")
+        edit_btn.setMinimumHeight(38)
         edit_btn.clicked.connect(self.edit_machine)
-        add_btn = QPushButton("➕  Cadastrar placa nesta máquina")
+        add_btn = QPushButton("Cadastrar placa")
         add_btn.setObjectName("btnPrimary")
-        add_btn.setMinimumHeight(40)
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setMinimumHeight(38)
         add_btn.clicked.connect(self._start_board_for_machine)
         actions.addWidget(edit_btn)
         actions.addWidget(add_btn, 1)
@@ -1497,7 +1454,7 @@ class PlacaTab(QWidget):
             self.machine_count_label.setText(f"{len(machines)} máquina(s)  •  {len(boards)} placa(s)")
         else:
             self.machine_count_label.setText("Nenhuma máquina cadastrada")
-        self.show_status(f"Carregadas {len(boards)} placas em {len(machines)} máquinas")
+        self.show_status(f"Carregadas {len(boards)} placas e {len(machines)} máquinas")
 
     def filter_boards(self):
         """Filtra a árvore pela busca (nome da máquina ou da placa) e por 'apenas ativas'."""
@@ -1530,6 +1487,26 @@ class PlacaTab(QWidget):
                 # máquinas sem placas continuam visíveis; o grupo "Sem máquina" some se vazio
                 top.setHidden(kind == "orphan" and visible_children == 0)
 
+    def _update_selection_actions(self, kind):
+        """Mostra somente as ações pertinentes ao item selecionado.
+
+        ``kind`` pode ser ``"machine"``, ``"board"`` ou ``None``.
+        Em vez de deixar controles sem função apenas desabilitados, eles são
+        realmente ocultados e deixam de ocupar espaço no layout.
+        """
+        show_board = kind == "board"
+        show_machine = kind == "machine"
+
+        for button in self.board_action_buttons:
+            button.setVisible(show_board)
+            button.setEnabled(show_board)
+
+        for button in self.machine_action_buttons:
+            button.setVisible(show_machine)
+            button.setEnabled(show_machine)
+
+        self.action_title.setVisible(show_board or show_machine)
+
     def on_board_selected(self):
         """Trata a seleção na árvore (máquina ou placa)."""
         selected = self.board_tree.selectedItems()
@@ -1548,12 +1525,7 @@ class PlacaTab(QWidget):
         self.current_machine = machine
 
         has_board = board is not None
-        self.details_btn.setEnabled(has_board)
-        self.import_btn.setEnabled(has_board)
-        self.move_btn.setEnabled(has_board)
-        self.delete_btn.setEnabled(has_board)
-        self.edit_machine_btn.setEnabled(machine is not None)
-        self.delete_machine_btn.setEnabled(machine is not None)
+        self._update_selection_actions(kind if (has_board or machine is not None) else None)
 
         try:
             if has_board:
@@ -1711,7 +1683,7 @@ class PlacaTab(QWidget):
         return query.first() is not None
 
     def show_board_details(self):
-        """Mostra os detalhes da placa selecionada (cartões, números e prévia da imagem)."""
+        """Resumo da placa selecionada, com dados, métricas e imagem."""
         board = self.current_board
         if not board:
             return
@@ -1728,7 +1700,7 @@ class PlacaTab(QWidget):
             frame = QFrame()
             frame.setObjectName("infoTile")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(14, 10, 14, 10)
+            box.setContentsMargins(12, 9, 12, 9)
             box.setSpacing(2)
             cap = QLabel(caption.upper())
             cap.setObjectName("tileCaption")
@@ -1743,7 +1715,7 @@ class PlacaTab(QWidget):
             frame = QFrame()
             frame.setObjectName("statTile")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(8, 10, 8, 10)
+            box.setContentsMargins(8, 9, 8, 9)
             box.setSpacing(0)
             num = QLabel(str(value))
             num.setObjectName("tileValue")
@@ -1755,89 +1727,79 @@ class PlacaTab(QWidget):
             box.addWidget(cap)
             return frame
 
-        # --- Título e etiquetas ---
         title = QLabel(board.name)
         title.setObjectName("detailTitle")
         title.setWordWrap(True)
+        self.details_layout.addWidget(title)
 
         chips = QHBoxLayout()
         chips.setSpacing(8)
-        chips.addWidget(chip("●  Ativa" if board.is_active else "●  Inativa",
+        chips.addWidget(chip("ATIVA" if board.is_active else "INATIVA",
                              "statusOn" if board.is_active else "statusOff"))
         machine_name = board.machine.name if board.machine else "Sem máquina"
-        chips.addWidget(chip(f"🏭  {machine_name}", "machineChip"))
+        chips.addWidget(chip(machine_name, "machineChip"))
         chips.addStretch()
+        self.details_layout.addLayout(chips)
 
-        # --- Dados da placa ---
         created = board.created_at.strftime("%d/%m/%Y") if board.created_at else "—"
         info_grid = QGridLayout()
-        info_grid.setHorizontalSpacing(10)
-        info_grid.setVerticalSpacing(10)
+        info_grid.setHorizontalSpacing(8)
+        info_grid.setVerticalSpacing(8)
         info_grid.addWidget(info_tile("Modelo", board.model), 0, 0)
         info_grid.addWidget(info_tile("Versão", board.version), 0, 1)
         info_grid.addWidget(info_tile("Número de série", board.serial_number), 1, 0)
         info_grid.addWidget(info_tile("Cadastrada em", created), 1, 1)
+        self.details_layout.addLayout(info_grid)
 
-        # --- Números ---
         points_count = self.session.query(TestPoint).filter_by(board_id=board.id).count()
         plans_count = self.session.query(TestPlan).filter_by(board_model_id=board.model_id).count()
         runs_count = self.session.query(TestRun).filter_by(board_id=board.id).count()
         images_count = len(board.images)
-
         stats = QHBoxLayout()
-        stats.setSpacing(10)
+        stats.setSpacing(8)
         stats.addWidget(stat_tile(points_count, "PONTOS"))
         stats.addWidget(stat_tile(plans_count, "PLANOS"))
         stats.addWidget(stat_tile(runs_count, "EXECUÇÕES"))
         stats.addWidget(stat_tile(images_count, "IMAGENS"))
+        self.details_layout.addLayout(stats)
 
-        # --- Pré-visualização ---
         preview_header = QHBoxLayout()
-        preview_title = QLabel("Pré-visualização da placa")
+        preview_title = QLabel("Imagem da placa")
         preview_title.setObjectName("sectionTitle")
         self.preview_combo = QComboBox()
-        self.preview_combo.setMinimumWidth(190)
+        self.preview_combo.setMinimumWidth(170)
         self.preview_combo.currentIndexChanged.connect(self._on_preview_choice)
         preview_header.addWidget(preview_title)
         preview_header.addStretch()
         preview_header.addWidget(self.preview_combo)
+        self.details_layout.addLayout(preview_header)
 
         self.preview_label = ImagePreviewLabel()
-        self.locate_btn = QPushButton("📁  Localizar imagem")
-        self.locate_btn.setObjectName("btnGhost")
-        self.locate_btn.setMinimumHeight(36)
-        self.locate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.details_layout.addWidget(self.preview_label, 1)
+        self.locate_btn = QPushButton("Localizar imagem")
+        self.locate_btn.setObjectName("btnSecondary")
+        self.locate_btn.setMinimumHeight(34)
         self.locate_btn.clicked.connect(self.locate_image)
         self.locate_btn.setVisible(False)
+        self.details_layout.addWidget(self.locate_btn)
 
-        # --- Ações ---
         actions = QHBoxLayout()
-        actions.setSpacing(10)
-        open_btn = QPushButton("👁️  Ver Detalhes Completos")
-        open_btn.setObjectName("btnBlue")
-        open_btn.setMinimumHeight(40)
-        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        actions.setSpacing(8)
+        open_btn = QPushButton("Detalhes completos")
+        open_btn.setObjectName("btnSecondary")
+        open_btn.setMinimumHeight(38)
         open_btn.clicked.connect(self.view_board_details)
-        image_btn = QPushButton("🖼️  Adicionar Imagem")
+        image_btn = QPushButton("Adicionar imagem")
         image_btn.setObjectName("btnPrimary")
-        image_btn.setMinimumHeight(40)
-        image_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        image_btn.setMinimumHeight(38)
         image_btn.clicked.connect(self.add_image)
         actions.addWidget(open_btn)
         actions.addWidget(image_btn)
-
-        self.details_layout.addWidget(title)
-        self.details_layout.addLayout(chips)
-        self.details_layout.addLayout(info_grid)
-        self.details_layout.addLayout(stats)
-        self.details_layout.addLayout(preview_header)
-        self.details_layout.addWidget(self.preview_label, 1)
-        self.details_layout.addWidget(self.locate_btn)
         self.details_layout.addLayout(actions)
 
         try:
             self._fill_preview()
-        except Exception as exc:  # a prévia nunca deve derrubar o programa
+        except Exception as exc:
             import traceback
             logger.error("Erro na pré-visualização: %s", traceback.format_exc())
             self.preview_label.show_message(f"Erro ao carregar a prévia:\n{exc}")

@@ -11,3 +11,56 @@ Traceback (most recent call last):
     """))
     ^^^^
 RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+
+--- 2026-10-05 19:38:51
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\main.py", line 500, in <module>
+    login = LoginDialog(session)
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\login.py", line 28, in __init__
+    self.setup_ui()
+    ~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\login.py", line 58, in setup_ui
+    self.setLayout(layout)
+    ~~~~~~~~~~~~~~^^^^^^^^
+KeyboardInterrupt
+
+--- 2026-10-05 19:44:03
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\image_marker.py", line 1835, in <lambda>
+    QTimer.singleShot(4000, lambda: self.status_label.setStyleSheet(f"""
+                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+        color: {Theme.TEXT_MUTED}; font-size: 10px;
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        background: transparent;
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    """))
+    ^^^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+
+--- 2026-10-05 19:44:17
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\image_marker.py", line 1835, in <lambda>
+    QTimer.singleShot(4000, lambda: self.status_label.setStyleSheet(f"""
+                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+        color: {Theme.TEXT_MUTED}; font-size: 10px;
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        background: transparent;
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    """))
+    ^^^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+
+--- 2026-10-05 20:12:15
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 698, in view_plan_details
+    dialog = PlanDetailsDialog(self.current_plan, self.session)
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 28, in __init__
+    self.setup_ui()
+    ~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 39, in setup_ui
+    layout.addWidget(self.create_header())
+                     ~~~~~~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 66, in create_header
+    board_name = self.plan.board.name if self.plan.board else "—"
+                                         ^^^^^^^^^^^^^^^
+AttributeError: 'TestPlan' object has no attribute 'board'

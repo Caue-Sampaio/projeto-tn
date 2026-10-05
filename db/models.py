@@ -131,6 +131,11 @@ class TestPoint(Base):
     # Measured columns removed, they belong to the measurements table
 
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Cor visual persistida do marcador no scanner. Novos pontos sempre nascem
+    # vermelhos; a UI pode alterar esta cor individualmente via QColorDialog.
+    marker_color: Mapped[str] = mapped_column(String(7), default="#E53935", nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     board_id: Mapped[int] = mapped_column(ForeignKey("board_units.id"))

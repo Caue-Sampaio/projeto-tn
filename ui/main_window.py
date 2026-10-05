@@ -260,24 +260,32 @@ class MainWindow(QMainWindow):
             self.placas_view.refresh_boards()
 
     def handle_dashboard_action(self, action_id):
-        """Executa os atalhos do dashboard."""
+        """Navega para a área correspondente sem iniciar ações automaticamente.
 
-        if action_id == "import_image":
-            self._dashboard_import_image()
+        Os cards do dashboard funcionam somente como atalhos de navegação.
+        Seleção de placa, cadastro de pontos, importação de imagem, edição de
+        plano e geração de relatório continuam sendo iniciados pelo usuário
+        dentro da aba apropriada.
+        """
 
-        elif action_id == "components":
-            self._dashboard_components()
+        # Área de cadastro/consulta de placas e imagens.
+        if action_id in {"projects", "import_image"}:
+            self.switch_tab(
+                1,
+                self.btn_placas,
+            )
+            return
 
-        elif action_id == "mapping":
-            self._dashboard_mapping()
+        # Área operacional de mapeamento, planos, execução e relatórios.
+        if action_id in {"mapping", "pins", "report"}:
+            self.switch_tab(
+                2,
+                self.btn_testes,
+            )
+            return
 
-        elif action_id == "pins":
-            self._dashboard_pins()
-
-        elif action_id == "report":
-            self._dashboard_report()
-
-        elif action_id == "projects":
+        # Compatibilidade com atalhos antigos que possam voltar ao dashboard.
+        if action_id == "components":
             self.switch_tab(
                 1,
                 self.btn_placas,

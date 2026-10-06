@@ -25,6 +25,7 @@ from db.models import TestPoint, BoardUnit, Measurement, OscilloscopeCapture, Os
 from sqlalchemy.orm import Session
 from ui.oscilloscope_panel import OscilloscopePanel
 from oscilloscope.base import OscilloscopeReading
+import json
 import logging
 import os
 from datetime import datetime
@@ -1025,6 +1026,7 @@ class ImageMarker(QWidget):
         self.oscilloscope_panel = OscilloscopePanel(Theme, self)
         self.oscilloscope_panel.capture_requested.connect(self._persist_oscilloscope_reading)
         self.oscilloscope_panel.live_reading_changed.connect(self._on_live_scope_reading)
+        self.oscilloscope_panel.waveform_similarity_changed.connect(self._on_waveform_similarity)
         self.oscilloscope_panel.status_changed.connect(self.show_status)
         layout.addWidget(self.oscilloscope_panel)
         layout.addSpacing(8)
@@ -1109,6 +1111,16 @@ class ImageMarker(QWidget):
             }
 
         card_layout.addWidget(self.comparison_strip)
+
+        # Comparação da forma da onda. A curva correta aparece tracejada na
+        # própria tela do osciloscópio; aqui mostramos a similaridade numérica.
+        self.waveform_compare_label = QLabel("FORMA DA ONDA  •  sem referência de curva")
+        self.waveform_compare_label.setObjectName("statusInfo")
+        self.waveform_compare_label.setMinimumHeight(22)
+        self.waveform_compare_label.setStyleSheet(
+            f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: 600; padding: 0 8px;"
+        )
+        card_layout.addWidget(self.waveform_compare_label)
 
         # Tabela compacta: visão geral de todos os pontos. Os detalhes completos
         # ficam na faixa acima e em tooltip, evitando colunas espremidas.
@@ -1858,6 +1870,80 @@ class ImageMarker(QWidget):
             return Theme.ERROR_RED
         return Theme.TEXT_MUTED
 
+    @staticmethod
+    def _decode_reference_waveform(ref):
+        if ref is None or not getattr(ref, "waveform_json", None):
+            return None
+        try:
+            data = json.loads(ref.waveform_json)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if not data.get("x_s") or not data.get("y_v"):
+            return None
+        return data
+
+    def _sync_reference_waveform(self, tp: TestPoint | None) -> None:
+        """Carrega no mini-scope a curva correta do ponto selecionado."""
+        if tp is None:
+            self.oscilloscope_panel.clear_reference_waveform()
+            if hasattr(self, "waveform_compare_label"):
+                self.waveform_compare_label.setText("FORMA DA ONDA  •  nenhum ponto selecionado")
+                self.waveform_compare_label.setStyleSheet(
+                    f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: 600; padding: 0 8px;"
+                )
+            return
+
+        ref = self._reference_for_point(tp)
+        waveform = self._decode_reference_waveform(ref)
+        if waveform:
+            self.oscilloscope_panel.set_reference_waveform(
+                waveform,
+                channel=getattr(ref, "channel", 1) or 1,
+                point_name=tp.refdes,
+                select_channel=True,
+            )
+            if hasattr(self, "waveform_compare_label"):
+                points = int(waveform.get("points") or len(waveform.get("y_v") or []))
+                self.waveform_compare_label.setText(
+                    f"FORMA DA ONDA  •  referência carregada ({points} pontos)  •  linha tracejada no osciloscópio"
+                )
+                self.waveform_compare_label.setStyleSheet(
+                    f"color: {Theme.TEXT_SECONDARY}; font-size: 10px; font-weight: 650; padding: 0 8px;"
+                )
+        else:
+            self.oscilloscope_panel.clear_reference_waveform()
+            if hasattr(self, "waveform_compare_label"):
+                self.waveform_compare_label.setText("FORMA DA ONDA  •  sem referência de curva")
+                self.waveform_compare_label.setStyleSheet(
+                    f"color: {Theme.ALERT_AMBER}; font-size: 10px; font-weight: 650; padding: 0 8px;"
+                )
+
+    def _on_waveform_similarity(self, payload):
+        if self.current_point is None or not isinstance(payload, dict):
+            return
+        if int(payload.get("point_id") or -1) != int(self.current_point.id):
+            return
+        similarity = payload.get("similarity_pct")
+        if similarity is None or not hasattr(self, "waveform_compare_label"):
+            return
+        similarity = float(similarity)
+        # É um indicador de similaridade visual; por enquanto não altera o
+        # status elétrico OK/LIMITE/FORA, que continua baseado nas tolerâncias.
+        if similarity >= 90.0:
+            color = Theme.VCC_GREEN
+        elif similarity >= 75.0:
+            color = Theme.ALERT_AMBER
+        else:
+            color = Theme.ERROR_RED
+        self.waveform_compare_label.setText(
+            f"FORMA DA ONDA  •  similaridade {similarity:.1f}%  •  tracejado = referência"
+        )
+        self.waveform_compare_label.setStyleSheet(
+            f"color: {color}; font-size: 10px; font-weight: 750; padding: 0 8px;"
+        )
+
     def _reference_for_point(self, tp):
         ref = self._reference_cache.get(tp.refdes)
         if ref is not None:
@@ -2058,6 +2144,8 @@ class ImageMarker(QWidget):
             for ref in self.session.query(OscilloscopeReference)
             .filter_by(board_model_id=self.board.model_id).all()
         }
+        if self.current_point is not None:
+            self._sync_reference_waveform(self.current_point)
 
         for row_idx, tp in enumerate(points):
             self.points_table.insertRow(row_idx)
@@ -2100,6 +2188,7 @@ class ImageMarker(QWidget):
         if not rows:
             self.current_point = None
             self.oscilloscope_panel.set_selected_point(None)
+            self._sync_reference_waveform(None)
             self._update_point_actions(False)
             if hasattr(self, "comparison_strip"):
                 self.comparison_strip.setVisible(False)
@@ -2116,6 +2205,7 @@ class ImageMarker(QWidget):
 
         if self.current_point:
             self.oscilloscope_panel.set_selected_point(self.current_point)
+            self._sync_reference_waveform(self.current_point)
             if self.oscilloscope_panel.is_paused():
                 self.selected_point_hint.setText(
                     f"{self.current_point.refdes} • PAUSADO — reposicione a ponta e pressione ▶"
@@ -2138,6 +2228,7 @@ class ImageMarker(QWidget):
         """Select a point programmatically (e.g., from canvas click)."""
         self.current_point = tp
         self.oscilloscope_panel.set_selected_point(tp)
+        self._sync_reference_waveform(tp)
         if self.oscilloscope_panel.is_paused():
             self.selected_point_hint.setText(
                 f"{tp.refdes} • PAUSADO — reposicione a ponta e pressione ▶"

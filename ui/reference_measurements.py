@@ -20,13 +20,14 @@ from ui.oscilloscope_panel import OscilloscopePanel
 
 
 class RefTheme:
-    BG_PRIMARY = "#0F1419"
-    BG_SURFACE = "#1A1F2E"
-    BG_SURFACE_ALT = "#232A3B"
-    BG_INPUT = "#2A3142"
-    BG_HOVER = "#2E3A4E"
-    BG_CANVAS = "#0D1117"
-    BORDER_SUBTLE = "#2E3650"
+    # Página de referência: fundo preto real para destacar PCB e osciloscópio.
+    BG_PRIMARY = "#000000"
+    BG_SURFACE = "#0B0F14"
+    BG_SURFACE_ALT = "#111722"
+    BG_INPUT = "#151C28"
+    BG_HOVER = "#182231"
+    BG_CANVAS = "#030507"
+    BORDER_SUBTLE = "#263244"
     TEXT_PRIMARY = "#E2E8F0"
     TEXT_SECONDARY = "#94A3B8"
     TEXT_MUTED = "#64748B"
@@ -473,10 +474,10 @@ class ReferenceMeasurements(QWidget):
         rv.addLayout(actions)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
             "Ponto", "Vpp correto", "Vrms correto", "Freq. correta",
-            "Tol. Vpp", "Tol. Vrms", "Tol. Freq.", "Atualizado"
+            "Tol. Vpp", "Tol. Vrms", "Tol. Freq.", "Onda", "Atualizado"
         ])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -486,9 +487,9 @@ class ReferenceMeasurements(QWidget):
         self.table.setShowGrid(False)
         self.table.verticalHeader().setDefaultSectionSize(34)
         hdr = self.table.horizontalHeader()
-        for col in range(7):
+        for col in range(8):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._table_selection)
         self.table.cellDoubleClicked.connect(lambda *_: self.edit_reference())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -552,6 +553,7 @@ class ReferenceMeasurements(QWidget):
         self.current_board = board
         self.current_point = None
         self.scope.set_selected_point(None)
+        self.scope.clear_reference_waveform()
         self.edit_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         if hasattr(self, "point_options_btn"):
@@ -709,9 +711,20 @@ class ReferenceMeasurements(QWidget):
                 cell = QTableWidgetItem(text)
                 cell.setForeground(QColor(RefTheme.VCC_GREEN if value is not None else RefTheme.TEXT_MUTED))
                 self.table.setItem(row, col, cell)
+            waveform = self._decode_reference_waveform(ref)
+            if waveform:
+                points = int(waveform.get("points") or len(waveform.get("y_v") or []))
+                wave_item = QTableWidgetItem(f"✓ {points} pts")
+                wave_item.setForeground(QColor(RefTheme.ACCENT_CYAN))
+                wave_item.setToolTip("Forma de onda correta salva para comparação visual")
+            else:
+                wave_item = QTableWidgetItem("--")
+                wave_item.setForeground(QColor(RefTheme.TEXT_MUTED))
+            self.table.setItem(row, 7, wave_item)
+
             updated = getattr(ref, "updated_at", None)
             updated_text = updated.strftime("%d/%m/%Y %H:%M") if updated else "--"
-            self.table.setItem(row, 7, QTableWidgetItem(updated_text))
+            self.table.setItem(row, 8, QTableWidgetItem(updated_text))
 
     def _table_selection(self):
         items = self.table.selectedItems()
@@ -731,6 +744,7 @@ class ReferenceMeasurements(QWidget):
             item.set_selected(pid == point.id)
         self.selection_label.setText(f"Ponto: {point.refdes}")
         self.scope.set_selected_point(point)
+        self._show_saved_reference_waveform(point)
         self.edit_btn.setEnabled(True)
         self.clear_btn.setEnabled(True)
         self.point_options_btn.setEnabled(True)
@@ -900,6 +914,39 @@ class ReferenceMeasurements(QWidget):
         remove.triggered.connect(lambda: self.delete_point(point))
         menu.exec(global_pos)
 
+    @staticmethod
+    def _decode_reference_waveform(ref):
+        if ref is None or not getattr(ref, "waveform_json", None):
+            return None
+        try:
+            data = json.loads(ref.waveform_json)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if not data.get("x_s") or not data.get("y_v"):
+            return None
+        return data
+
+    def _show_saved_reference_waveform(self, point: TestPoint) -> None:
+        if not self.current_board or point is None:
+            self.scope.clear_reference_waveform()
+            return
+        ref = self.session.query(OscilloscopeReference).filter_by(
+            board_model_id=self.current_board.model_id,
+            refdes=point.refdes,
+        ).one_or_none()
+        waveform = self._decode_reference_waveform(ref)
+        if waveform:
+            self.scope.set_reference_waveform(
+                waveform,
+                channel=getattr(ref, "channel", 1) or 1,
+                point_name=point.refdes,
+                select_channel=True,
+            )
+        else:
+            self.scope.clear_reference_waveform()
+
     def _reference_for_current(self):
         if not self.current_board or not self.current_point:
             return None
@@ -940,11 +987,31 @@ class ReferenceMeasurements(QWidget):
         ref.duty_cycle_pct = reading.duty_cycle_pct
         ref.vertical_offset_v = reading.vertical_offset_v
         ref.oscilloscope_id = reading.oscilloscope_id
-        ref.waveform_json = json.dumps(reading.waveform, ensure_ascii=False) if reading.waveform else None
+
+        # Salva também a curva completa tempo x tensão. A captura SCPI é a
+        # preferência; se ela vier vazia (por exemplo, por timeout de waveform),
+        # usamos a curva que já está sendo exibida na mini tela.
+        waveform = reading.waveform or self.scope.current_waveform(reading.channel)
+        ref.waveform_json = (
+            json.dumps(waveform, ensure_ascii=False, separators=(",", ":"))
+            if waveform else None
+        )
         ref.updated_at = datetime.now()
         self.session.commit()
         self.refresh_table()
-        self.status.setText(f"Referência de {point.refdes} salva com Vpp, Vrms e frequência.")
+        self._show_saved_reference_waveform(point)
+
+        wave_points = 0
+        if waveform:
+            wave_points = int(waveform.get("points") or len(waveform.get("y_v") or []))
+        if wave_points:
+            self.status.setText(
+                f"Referência de {point.refdes} salva: Vpp, Vrms, frequência e forma de onda ({wave_points} pontos)."
+            )
+        else:
+            self.status.setText(
+                f"Referência de {point.refdes} salva sem curva. Tente capturar novamente para gravar a forma de onda."
+            )
 
     def edit_reference(self):
         if not self.current_point or not self.current_board:
@@ -966,6 +1033,7 @@ class ReferenceMeasurements(QWidget):
         ref.updated_at = datetime.now()
         self.session.commit()
         self.refresh_table()
+        self._show_saved_reference_waveform(self.current_point)
         self.status.setText(f"Referência de {self.current_point.refdes} atualizada.")
 
     def clear_reference(self):
@@ -979,6 +1047,7 @@ class ReferenceMeasurements(QWidget):
             return
         self.session.delete(ref)
         self.session.commit()
+        self.scope.clear_reference_waveform()
         self.refresh_table()
         self.status.setText("Referência removida.")
 
@@ -992,27 +1061,103 @@ class ReferenceMeasurements(QWidget):
     def _apply_style(self):
         t = RefTheme
         self.setStyleSheet(f"""
-            QWidget {{ color:{t.TEXT_PRIMARY}; font-family:'Segoe UI', Arial; }}
-            QWidget {{ background:{t.BG_PRIMARY}; }}
-            QFrame#header, QFrame#panel, QFrame#boardSelectCard {{ background:{t.BG_SURFACE}; border:1px solid {t.BORDER_SUBTLE}; border-radius:7px; }}
-            QLabel#pageTitle {{ color:{t.TEXT_BRIGHT}; font-size:16px; font-weight:800; }}
-            QLabel#headerSubtitle {{ color:{t.TEXT_MUTED}; font-size:11px; }}
-            QLabel#sectionTitle {{ color:{t.TEXT_BRIGHT}; font-size:12px; font-weight:700; }}
+            /* Fundo preto real da página de referência */
+            QWidget {{
+                color:{t.TEXT_PRIMARY};
+                font-family:'Segoe UI', Arial;
+                background:{t.BG_PRIMARY};
+            }}
+
+            QFrame#header {{
+                background:#070A0F;
+                border:1px solid #1E293B;
+                border-left:3px solid {t.ACCENT_CYAN};
+                border-radius:7px;
+            }}
+            QFrame#panel, QFrame#boardSelectCard {{
+                background:{t.BG_SURFACE};
+                border:1px solid {t.BORDER_SUBTLE};
+                border-radius:8px;
+            }}
+
+            QLabel#pageTitle {{ color:#FFFFFF; font-size:16px; font-weight:800; }}
+            QLabel#headerSubtitle {{ color:#718096; font-size:11px; }}
+            QLabel#sectionTitle {{ color:#F8FAFC; font-size:12px; font-weight:700; }}
             QLabel#caption {{ color:{t.ACCENT_CYAN}; font-size:10px; font-weight:800; }}
-            QLabel#infoValue {{ color:{t.TEXT_BRIGHT}; font-size:14px; font-weight:700; }}
-            QLabel#muted {{ color:{t.TEXT_MUTED}; }}
-            QPushButton#selectBoardBtn {{ background:{t.BG_SURFACE_ALT}; color:{t.TEXT_PRIMARY}; border:1px solid {t.BORDER_SUBTLE}; border-radius:6px; padding:7px 12px; font-weight:700; }}
-            QPushButton#selectBoardBtn:hover {{ border-color:{t.ACCENT_BLUE}; background:{t.BG_HOVER}; }}
-            QPushButton#addPointBtn:checked {{ background:{t.ACCENT_BLUE}; color:#FFFFFF; border-color:{t.ACCENT_CYAN}; }}
+            QLabel#infoValue {{ color:#FFFFFF; font-size:14px; font-weight:700; }}
+            QLabel#muted {{ color:#7C8AA0; }}
             QLabel#zoomValue {{ color:{t.ACCENT_CYAN}; font-size:10px; font-weight:700; }}
-            QSlider::groove:horizontal {{ height:4px; background:{t.BG_INPUT}; border-radius:2px; }}
-            QSlider::handle:horizontal {{ width:14px; margin:-5px 0; background:{t.ACCENT_BLUE}; border-radius:7px; }}
-            QComboBox {{ background:{t.BG_INPUT}; color:{t.TEXT_PRIMARY}; border:1px solid {t.BORDER_SUBTLE}; border-radius:5px; padding:6px 8px; }}
-            QPushButton {{ background:{t.BG_SURFACE_ALT}; color:{t.TEXT_PRIMARY}; border:1px solid {t.BORDER_SUBTLE}; border-radius:5px; padding:6px 10px; font-weight:600; }}
-            QPushButton:hover {{ border-color:{t.ACCENT_BLUE}; }}
-            QPushButton:disabled {{ color:{t.TEXT_MUTED}; }}
-            QGraphicsView#boardView {{ background:{t.BG_CANVAS}; border:1px solid {t.BORDER_SUBTLE}; }}
-            QTableWidget {{ background:{t.BG_SURFACE}; alternate-background-color:{t.BG_SURFACE_ALT}; color:{t.TEXT_PRIMARY}; border:1px solid {t.BORDER_SUBTLE}; selection-background-color:#164E63; }}
-            QHeaderView::section {{ background:{t.BG_SURFACE_ALT}; color:{t.TEXT_SECONDARY}; border:none; border-bottom:1px solid {t.BORDER_SUBTLE}; padding:7px; font-size:9px; font-weight:700; }}
-            QSplitter::handle {{ background:{t.BORDER_SUBTLE}; width:2px; }}
+
+            QPushButton {{
+                background:{t.BG_SURFACE_ALT};
+                color:{t.TEXT_PRIMARY};
+                border:1px solid {t.BORDER_SUBTLE};
+                border-radius:6px;
+                padding:6px 10px;
+                font-weight:600;
+            }}
+            QPushButton:hover {{
+                background:{t.BG_HOVER};
+                border-color:#3B82F6;
+                color:#FFFFFF;
+            }}
+            QPushButton:pressed {{ background:#0F172A; }}
+            QPushButton:disabled {{ color:#556276; background:#0D121A; border-color:#1B2431; }}
+            QPushButton#selectBoardBtn {{
+                background:#141C28;
+                color:#F8FAFC;
+                border:1px solid #334155;
+                border-radius:7px;
+                padding:7px 12px;
+                font-weight:700;
+            }}
+            QPushButton#selectBoardBtn:hover {{ border-color:{t.ACCENT_BLUE}; background:#182435; }}
+            QPushButton#addPointBtn:checked {{ background:{t.ACCENT_BLUE}; color:#FFFFFF; border-color:{t.ACCENT_CYAN}; }}
+
+            QSlider::groove:horizontal {{ height:4px; background:#1B2533; border-radius:2px; }}
+            QSlider::sub-page:horizontal {{ background:{t.ACCENT_BLUE}; border-radius:2px; }}
+            QSlider::handle:horizontal {{ width:14px; margin:-5px 0; background:{t.ACCENT_CYAN}; border-radius:7px; }}
+
+            QComboBox {{
+                background:{t.BG_INPUT};
+                color:{t.TEXT_PRIMARY};
+                border:1px solid {t.BORDER_SUBTLE};
+                border-radius:6px;
+                padding:6px 8px;
+            }}
+            QComboBox QAbstractItemView {{ background:#0D131C; color:#E5E7EB; selection-background-color:#164E63; }}
+
+            QGraphicsView#boardView {{
+                background:{t.BG_CANVAS};
+                border:1px solid #202B3A;
+                border-radius:5px;
+            }}
+
+            QTableWidget {{
+                background:#080B10;
+                alternate-background-color:#0E141D;
+                color:{t.TEXT_PRIMARY};
+                border:1px solid #202B3A;
+                border-radius:5px;
+                selection-background-color:#123B4D;
+                selection-color:#FFFFFF;
+            }}
+            QHeaderView::section {{
+                background:#101722;
+                color:#9FB0C7;
+                border:none;
+                border-bottom:1px solid #253247;
+                padding:7px;
+                font-size:9px;
+                font-weight:700;
+            }}
+
+            QSplitter::handle {{ background:#182130; width:2px; }}
+            QScrollBar:vertical {{ background:#05070A; width:10px; margin:0; }}
+            QScrollBar::handle:vertical {{ background:#263244; min-height:28px; border-radius:5px; }}
+            QScrollBar::handle:vertical:hover {{ background:#334155; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+            QScrollBar:horizontal {{ background:#05070A; height:10px; margin:0; }}
+            QScrollBar::handle:horizontal {{ background:#263244; min-width:28px; border-radius:5px; }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
         """)

@@ -4,7 +4,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -16,148 +15,170 @@ from db.models import BoardUnit, TestPlan, TestPoint, TestRun
 
 APP_VERSION = "1.0"
 
-# -----------------------------------------------------------------------------
-# IMPORTANTE
-# Esta refatoração altera APENAS a organização visual do dashboard.
-# A paleta original do projeto foi mantida:
-#   azul-marinho: #0F172A
-#   teal principal: #0F766E / #14B8A6 / #2DD4BF
-#   fundo: #F4F7F9
-#   superfícies: #FFFFFF
-# -----------------------------------------------------------------------------
-
 
 class StatCard(QFrame):
-    """Indicador compacto usado no resumo do dashboard."""
+    """Indicador refinado e compacto do dashboard."""
 
-    def __init__(self, title, value, accent="#16A085", parent=None):
+    def __init__(self, title, value, accent="#14B8A6", helper="cadastrados", parent=None):
         super().__init__(parent)
         self.setObjectName("statCard")
-        self.setMinimumHeight(82)
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-        self.setStyleSheet(
-            f"""
-            QFrame#statCard {{
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-left: 4px solid {accent};
-                border-radius: 9px;
-            }}
-            """
-        )
+        self.setMinimumHeight(92)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(2)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet(
-            "color: #6B7280; font-size: 11px; font-weight: 600;"
-        )
-
-        self.value_label = QLabel(str(value))
-        self.value_label.setStyleSheet(
-            "color: #111827; font-size: 23px; font-weight: 700;"
-        )
-
-        layout.addWidget(title_label)
-        layout.addWidget(self.value_label)
-
-
-class ActionCard(QFrame):
-    """Atalho funcional do fluxo principal do programa."""
-
-    clicked = pyqtSignal(str)
-
-    def __init__(self, action_id, step, title, description, parent=None):
-        super().__init__(parent)
-
-        self.action_id = action_id
-        self.setObjectName("actionCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(118)
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-
-        self._apply_style(False)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(7)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 13, 16, 12)
+        root.setSpacing(5)
 
         top = QHBoxLayout()
         top.setSpacing(8)
 
-        step_label = QLabel(step)
-        step_label.setFixedSize(30, 24)
-        step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        step_label.setStyleSheet(
-            """
-            QLabel {
-                background: #F0FDFA;
-                color: #0F766E;
-                border: 1px solid #14B8A6;
-                border-radius: 6px;
-                font-size: 10px;
-                font-weight: 700;
-            }
-            """
-        )
+        title_label = QLabel(title.upper())
+        title_label.setObjectName("statTitle")
+        top.addWidget(title_label)
+        top.addStretch()
 
-        title_label = QLabel(title)
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet(
-            """
-            color: #111827;
-            font-size: 14px;
-            font-weight: 700;
-            background: transparent;
-            """
-        )
+        dot = QFrame()
+        dot.setFixedSize(7, 7)
+        dot.setStyleSheet(f"background:{accent}; border-radius:3px;")
+        top.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        top.addWidget(step_label)
-        top.addWidget(title_label, 1)
+        self.value_label = QLabel(str(value))
+        self.value_label.setObjectName("statValue")
 
-        description_label = QLabel(description)
-        description_label.setWordWrap(True)
-        description_label.setStyleSheet(
-            """
-            color: #6B7280;
-            font-size: 11px;
-            background: transparent;
-            """
-        )
+        helper_label = QLabel(helper)
+        helper_label.setObjectName("statHelper")
 
-        open_label = QLabel("Ir para aba  →")
-        open_label.setStyleSheet(
-            """
-            color: #0F766E;
-            font-size: 11px;
-            font-weight: 700;
-            background: transparent;
-            """
-        )
-
-        layout.addLayout(top)
-        layout.addWidget(description_label)
-        layout.addStretch()
-        layout.addWidget(open_label)
-
-    def _apply_style(self, hovered):
-        background = "#F0FDFA" if hovered else "#FFFFFF"
-        border = "#14B8A6" if hovered else "#E5E7EB"
+        root.addLayout(top)
+        root.addWidget(self.value_label)
+        root.addWidget(helper_label)
 
         self.setStyleSheet(
             f"""
+            QFrame#statCard {{
+                background:#FFFFFF;
+                border:1px solid #E2E8F0;
+                border-top:3px solid {accent};
+                border-radius:11px;
+            }}
+            QLabel#statTitle {{
+                color:#64748B;
+                font-size:9px;
+                font-weight:800;
+                letter-spacing:0.4px;
+                background:transparent;
+            }}
+            QLabel#statValue {{
+                color:#0F172A;
+                font-size:25px;
+                font-weight:800;
+                background:transparent;
+            }}
+            QLabel#statHelper {{
+                color:#94A3B8;
+                font-size:10px;
+                background:transparent;
+            }}
+            """
+        )
+
+
+class ActionCard(QFrame):
+    """Atalho do fluxo principal; navega sem iniciar operações automaticamente."""
+
+    clicked = pyqtSignal(str)
+
+    def __init__(self, action_id, step, title, description, eyebrow, parent=None):
+        super().__init__(parent)
+        self.action_id = action_id
+        self.setObjectName("actionCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(112)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._hovered = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 13)
+        root.setSpacing(7)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+
+        number = QLabel(step)
+        number.setObjectName("actionNumber")
+        number.setFixedSize(34, 28)
+        number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        text_box = QVBoxLayout()
+        text_box.setSpacing(1)
+
+        eyebrow_label = QLabel(eyebrow.upper())
+        eyebrow_label.setObjectName("actionEyebrow")
+
+        title_label = QLabel(title)
+        title_label.setObjectName("actionTitle")
+        title_label.setWordWrap(True)
+
+        text_box.addWidget(eyebrow_label)
+        text_box.addWidget(title_label)
+
+        top.addWidget(number, alignment=Qt.AlignmentFlag.AlignTop)
+        top.addLayout(text_box, 1)
+
+        arrow = QLabel("→")
+        arrow.setObjectName("actionArrow")
+        arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top.addWidget(arrow, alignment=Qt.AlignmentFlag.AlignTop)
+
+        description_label = QLabel(description)
+        description_label.setObjectName("actionDescription")
+        description_label.setWordWrap(True)
+
+        root.addLayout(top)
+        root.addWidget(description_label)
+        root.addStretch(1)
+
+        self._apply_style(False)
+
+    def _apply_style(self, hovered: bool):
+        bg = "#F8FFFD" if hovered else "#FFFFFF"
+        border = "#5EEAD4" if hovered else "#E2E8F0"
+        self.setStyleSheet(
+            f"""
             QFrame#actionCard {{
-                background: {background};
-                border: 1px solid {border};
-                border-radius: 10px;
+                background:{bg};
+                border:1px solid {border};
+                border-radius:11px;
+            }}
+            QLabel#actionNumber {{
+                background:#F0FDFA;
+                color:#0F766E;
+                border:1px solid #99F6E4;
+                border-radius:7px;
+                font-size:10px;
+                font-weight:800;
+            }}
+            QLabel#actionEyebrow {{
+                color:#0F766E;
+                font-size:8px;
+                font-weight:800;
+                background:transparent;
+            }}
+            QLabel#actionTitle {{
+                color:#0F172A;
+                font-size:13px;
+                font-weight:750;
+                background:transparent;
+            }}
+            QLabel#actionDescription {{
+                color:#64748B;
+                font-size:10px;
+                background:transparent;
+            }}
+            QLabel#actionArrow {{
+                color:{'#0F766E' if hovered else '#94A3B8'};
+                font-size:17px;
+                font-weight:700;
+                background:transparent;
             }}
             """
         )
@@ -180,48 +201,40 @@ class ActionCard(QFrame):
 
 
 class Dashboard(QWidget):
-    """
-    Dashboard inicial do TN Eletrosistem.
-
-    O dashboard foi reduzido para mostrar apenas:
-      1. identificação e contexto;
-      2. indicadores relevantes;
-      3. atalhos que realmente executam funções do sistema;
-      4. estado do banco e último teste.
-
-    Os atalhos meramente informativos / ainda não implementados foram retirados
-    da tela inicial, sem apagar os métodos correspondentes da MainWindow.
-    """
+    """Dashboard inicial refinado, sem alterar a lógica de navegação."""
 
     action_requested = pyqtSignal(str)
 
     def __init__(self, session, current_user):
         super().__init__()
-
         self.session = session
         self.current_user = current_user
         self.cards = []
-
-        self.setStyleSheet("background-color: #F4F7F9;")
-
+        self.setObjectName("dashboardRoot")
         self._build_ui()
         self.refresh_stats()
 
     def _build_ui(self):
+        self.setStyleSheet(
+            """
+            QWidget#dashboardRoot { background:#F4F7F9; }
+            QScrollArea { border:none; background:#F4F7F9; }
+            """
+        )
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("QScrollArea { border: none; }")
 
         content = QWidget()
-        content.setStyleSheet("background-color: #F4F7F9;")
+        content.setStyleSheet("background:#F4F7F9;")
 
         self.main_layout = QVBoxLayout(content)
-        self.main_layout.setContentsMargins(28, 24, 28, 20)
-        self.main_layout.setSpacing(16)
+        self.main_layout.setContentsMargins(28, 24, 28, 22)
+        self.main_layout.setSpacing(17)
 
         self._build_header()
         self._build_stats()
@@ -233,161 +246,163 @@ class Dashboard(QWidget):
         outer.addWidget(scroll)
 
     def _build_header(self):
-        """Cabeçalho mais compacto, mantendo a identidade visual existente."""
-        header = QFrame()
-        header.setObjectName("header")
-        header.setStyleSheet(
+        hero = QFrame()
+        hero.setObjectName("hero")
+        hero.setMinimumHeight(126)
+        hero.setStyleSheet(
             """
-            QFrame#header {
-                background: #0F172A;
-                border-radius: 12px;
+            QFrame#hero {
+                background:#0F172A;
+                border:1px solid #172554;
+                border-radius:14px;
             }
             """
         )
 
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(16)
+        layout = QHBoxLayout(hero)
+        layout.setContentsMargins(24, 20, 22, 20)
+        layout.setSpacing(24)
 
         left = QVBoxLayout()
-        left.setSpacing(3)
+        left.setSpacing(4)
 
-        title = QLabel("TN Eletrosistem • TestFlow")
+        kicker = QLabel("TN ELETROSISTEM  /  PAINEL OPERACIONAL")
+        kicker.setStyleSheet(
+            "color:#5EEAD4; font-size:9px; font-weight:800; letter-spacing:0.7px; background:transparent;"
+        )
+
+        title = QLabel("TestFlow")
         title.setStyleSheet(
-            "color: #FFFFFF; font-size: 19px; font-weight: 700; "
-            "background: transparent;"
+            "color:#FFFFFF; font-size:25px; font-weight:800; background:transparent;"
         )
 
-        subtitle = QLabel(
-            "Mapeamento, documentação e testes de placas eletrônicas"
-        )
+        subtitle = QLabel("Mapeamento, referências e testes de placas eletrônicas em um único fluxo.")
         subtitle.setStyleSheet(
-            "color: #CBD5E1; font-size: 11px; background: transparent;"
+            "color:#CBD5E1; font-size:11px; background:transparent;"
         )
+        subtitle.setWordWrap(True)
 
-        welcome = QLabel(f"Operador: {self.current_user.username}")
-        welcome.setStyleSheet(
-            "color: #94A3B8; font-size: 11px; background: transparent;"
-        )
-
+        left.addWidget(kicker)
         left.addWidget(title)
         left.addWidget(subtitle)
-        left.addWidget(welcome)
+        left.addStretch()
 
-        version = QLabel(f"v{APP_VERSION}")
-        version.setStyleSheet(
+        right_card = QFrame()
+        right_card.setObjectName("operatorCard")
+        right_card.setFixedWidth(220)
+        right_card.setStyleSheet(
             """
-            QLabel {
-                background: #134E4A;
-                color: #CCFBF1;
-                border: 1px solid #2DD4BF;
-                border-radius: 8px;
-                padding: 4px 8px;
-                font-size: 10px;
-                font-weight: 700;
+            QFrame#operatorCard {
+                background:#111C31;
+                border:1px solid #24324A;
+                border-radius:10px;
             }
             """
         )
+        rv = QVBoxLayout(right_card)
+        rv.setContentsMargins(14, 11, 14, 11)
+        rv.setSpacing(4)
+
+        op_caption = QLabel("SESSÃO ATUAL")
+        op_caption.setStyleSheet(
+            "color:#64748B; font-size:8px; font-weight:800; background:transparent;"
+        )
+        username = QLabel(self.current_user.username)
+        username.setStyleSheet(
+            "color:#F8FAFC; font-size:13px; font-weight:700; background:transparent;"
+        )
+        version = QLabel(f"Versão {APP_VERSION}  •  Sistema pronto")
+        version.setStyleSheet(
+            "color:#94A3B8; font-size:9px; background:transparent;"
+        )
+        status = QLabel("● ONLINE")
+        status.setStyleSheet(
+            "color:#5EEAD4; font-size:9px; font-weight:800; background:transparent;"
+        )
+
+        rv.addWidget(op_caption)
+        rv.addWidget(username)
+        rv.addWidget(version)
+        rv.addStretch()
+        rv.addWidget(status)
 
         layout.addLayout(left, 1)
-        layout.addWidget(version, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(right_card)
+        self.main_layout.addWidget(hero)
 
-        self.main_layout.addWidget(header)
+    def _section_header(self, title_text: str, subtitle_text: str):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        title = QLabel(title_text)
+        title.setStyleSheet(
+            "color:#0F172A; font-size:14px; font-weight:800; background:transparent;"
+        )
+        subtitle = QLabel(subtitle_text)
+        subtitle.setStyleSheet(
+            "color:#94A3B8; font-size:10px; background:transparent;"
+        )
+
+        row.addWidget(title)
+        row.addWidget(subtitle)
+        row.addStretch()
+        self.main_layout.addLayout(row)
 
     def _build_stats(self):
-        """Resumo numérico mantido, porém com cartões mais compactos."""
-        section_title = QLabel("Resumo do sistema")
-        section_title.setStyleSheet(
-            "color: #0F172A; font-size: 15px; font-weight: 700;"
-        )
-        self.main_layout.addWidget(section_title)
+        self._section_header("Visão geral", "Indicadores atuais do sistema")
 
         self.stats_grid = QGridLayout()
-        self.stats_grid.setHorizontalSpacing(10)
-        self.stats_grid.setVerticalSpacing(10)
+        self.stats_grid.setHorizontalSpacing(11)
+        self.stats_grid.setVerticalSpacing(11)
 
-        # As mesmas cores de destaque já utilizadas no dashboard original.
-        self.stat_boards = StatCard("Placas cadastradas", "0", "#0EA5E9")
-        self.stat_points = StatCard("Pontos mapeados", "0", "#14B8A6")
-        self.stat_plans = StatCard("Planos de teste", "0", "#8B5CF6")
-        self.stat_runs = StatCard("Testes realizados", "0", "#22C55E")
+        self.stat_boards = StatCard("Placas", "0", "#0EA5E9", "placas cadastradas")
+        self.stat_points = StatCard("Pontos", "0", "#14B8A6", "pontos mapeados")
+        self.stat_plans = StatCard("Planos", "0", "#8B5CF6", "planos de teste")
+        self.stat_runs = StatCard("Testes", "0", "#22C55E", "execuções registradas")
 
-        stats = [
+        for index, card in enumerate([
             self.stat_boards,
             self.stat_points,
             self.stat_plans,
             self.stat_runs,
-        ]
-
-        for index, card in enumerate(stats):
+        ]):
             self.stats_grid.addWidget(card, 0, index)
             self.stats_grid.setColumnStretch(index, 1)
 
         self.main_layout.addLayout(self.stats_grid)
 
     def _build_actions(self):
-        """
-        Mantém apenas atalhos que acionam uma função real do programa.
-
-        Retirados do dashboard:
-        - Analisar componentes: atualmente só abre aviso de recurso não pronto;
-        - Configurações: atualmente só abre texto informativo;
-        - Ajuda / documentação: atualmente só abre texto informativo.
-
-        Os métodos não são apagados da MainWindow, então podem ser recuperados
-        futuramente sem perda de código.
-        """
-        section_header = QHBoxLayout()
-        section_header.setSpacing(8)
-
-        title = QLabel("Fluxo principal")
-        title.setStyleSheet(
-            "color: #0F172A; font-size: 15px; font-weight: 700;"
-        )
-
-        hint = QLabel("Os atalhos apenas levam você até a área correta")
-        hint.setStyleSheet("color: #94A3B8; font-size: 11px;")
-
-        section_header.addWidget(title)
-        section_header.addStretch()
-        section_header.addWidget(hint)
-        self.main_layout.addLayout(section_header)
+        self._section_header("Fluxo principal", "Atalhos de navegação — nenhuma ação é iniciada automaticamente")
 
         self.actions_grid = QGridLayout()
         self.actions_grid.setHorizontalSpacing(12)
         self.actions_grid.setVerticalSpacing(12)
 
-        # Ordem baseada no fluxo real de uso do sistema.
         card_data = [
             (
-                "projects",
-                "01",
-                "Abrir placa / projeto",
-                "Selecione uma placa cadastrada e consulte suas informações.",
+                "projects", "01", "Abrir placa / projeto",
+                "Acesse as placas cadastradas, máquinas e informações do equipamento.",
+                "Placas",
             ),
             (
-                "import_image",
-                "02",
-                "Capturar / Importar imagem",
-                "Abra a aba de placas para selecionar a placa e gerenciar suas imagens.",
+                "import_image", "02", "Capturar / Importar imagem",
+                "Vá até a placa e gerencie as imagens usadas no mapeamento.",
+                "Imagem",
             ),
             (
-                "mapping",
-                "03",
-                "Mapear pontos e conexões",
-                "Abra a aba de testes e, após selecionar a placa, acesse o mapeamento.",
+                "mapping", "03", "Mapear pontos e conexões",
+                "Abra Testes e entre no mapeamento para posicionar e editar pontos.",
+                "Mapeamento",
             ),
             (
-                "pins",
-                "04",
-                "Pinos e plano de testes",
-                "Abra a aba de testes para selecionar a placa e editar o plano de testes.",
+                "pins", "04", "Pinos e plano de testes",
+                "Acesse a área de Testes para criar ou editar o plano da placa.",
+                "Plano",
             ),
             (
-                "report",
-                "05",
-                "Exportar relatório",
-                "Abra a aba de testes para executar ensaios e acessar os relatórios.",
+                "report", "05", "Exportar relatório",
+                "Vá até Testes para consultar execuções e gerar o relatório final.",
+                "Relatório",
             ),
         ]
 
@@ -400,34 +415,41 @@ class Dashboard(QWidget):
         self.main_layout.addLayout(self.actions_grid)
 
     def _build_footer(self):
-        """Barra de estado enxuta."""
         self.footer = QFrame()
         self.footer.setObjectName("footer")
         self.footer.setStyleSheet(
             """
             QFrame#footer {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 9px;
+                background:#FFFFFF;
+                border:1px solid #E2E8F0;
+                border-radius:10px;
             }
             """
         )
 
         layout = QHBoxLayout(self.footer)
-        layout.setContentsMargins(14, 9, 14, 9)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(12)
 
         self.status_label = QLabel("● Banco de dados conectado")
         self.status_label.setStyleSheet(
-            "color: #15803D; font-size: 11px; font-weight: 700;"
+            "color:#15803D; font-size:10px; font-weight:800; background:transparent;"
         )
+
+        divider = QLabel("|")
+        divider.setStyleSheet("color:#CBD5E1; background:transparent;")
+
+        hint = QLabel("Dados atualizados ao abrir o dashboard")
+        hint.setStyleSheet("color:#94A3B8; font-size:9px; background:transparent;")
 
         self.last_run_label = QLabel("Último teste: nenhum")
         self.last_run_label.setStyleSheet(
-            "color: #64748B; font-size: 11px;"
+            "color:#64748B; font-size:10px; background:transparent;"
         )
 
         layout.addWidget(self.status_label)
+        layout.addWidget(divider)
+        layout.addWidget(hint)
         layout.addStretch()
         layout.addWidget(self.last_run_label)
 
@@ -438,15 +460,13 @@ class Dashboard(QWidget):
         self._reflow_cards()
 
     def _reflow_cards(self):
-        """Reorganiza somente os atalhos quando a área útil muda de largura."""
         if not hasattr(self, "actions_grid"):
             return
 
         width = max(self.width(), 1)
-
-        if width >= 850:
+        if width >= 1080:
             columns = 3
-        elif width >= 620:
+        elif width >= 700:
             columns = 2
         else:
             columns = 1
@@ -459,15 +479,10 @@ class Dashboard(QWidget):
             col = index % columns
             self.actions_grid.addWidget(card, row, col)
 
-        # Garante distribuição uniforme sem criar espaços estranhos ao redimensionar.
         for column in range(3):
-            self.actions_grid.setColumnStretch(
-                column,
-                1 if column < columns else 0,
-            )
+            self.actions_grid.setColumnStretch(column, 1 if column < columns else 0)
 
     def refresh_stats(self):
-        """Atualiza os indicadores e o estado do último teste."""
         boards_count = self.session.query(BoardUnit).count()
         points_count = self.session.query(TestPoint).count()
         plans_count = self.session.query(TestPlan).count()
@@ -493,13 +508,7 @@ class Dashboard(QWidget):
             if latest_run.start_time
             else "-"
         )
-
-        board_name = (
-            latest_run.board.name
-            if latest_run.board is not None
-            else "placa não identificada"
-        )
-
+        board_name = latest_run.board.name if latest_run.board is not None else "placa não identificada"
         self.last_run_label.setText(
-            f"Último teste: {board_name} • {date_text} • {latest_run.status}"
+            f"Último teste: {board_name}  •  {date_text}  •  {latest_run.status}"
         )

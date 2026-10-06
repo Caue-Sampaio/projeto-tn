@@ -275,6 +275,9 @@ class OscilloscopePanel(QFrame):
     # A tela de mapeamento usa esse sinal para comparar em tempo real
     # sem salvar uma captura no banco a cada atualização.
     live_reading_changed = pyqtSignal(object)
+    # Similaridade visual da forma de onda atual com a referência salva.
+    # Payload: {"point_id", "channel", "similarity_pct"}.
+    waveform_similarity_changed = pyqtSignal(object)
     status_changed = pyqtSignal(str, str)
 
     def __init__(self, theme, parent=None):
@@ -293,6 +296,7 @@ class OscilloscopePanel(QFrame):
         self._expanded = True
         self._stream_paused = False
         self._last_live_emit = 0.0
+        self._last_waveform_emit = 0.0
 
         self._build_ui()
         self._apply_style()
@@ -649,6 +653,23 @@ class OscilloscopePanel(QFrame):
                     self._last_live_emit = now
                     self.live_reading_changed.emit(metric)
 
+            # A forma da onda é comparada diretamente no widget gráfico.
+            # Emitimos apenas o índice para a tela de pontos; não salvamos no
+            # banco a cada frame.
+            now_shape = time.monotonic()
+            similarity = self.scope_display.waveform_similarity(capture_ch)
+            if (
+                self.selected_point_id is not None
+                and similarity is not None
+                and now_shape - self._last_waveform_emit >= 0.10
+            ):
+                self._last_waveform_emit = now_shape
+                self.waveform_similarity_changed.emit({
+                    "point_id": self.selected_point_id,
+                    "channel": capture_ch,
+                    "similarity_pct": float(similarity),
+                })
+
         if self.reader is not None and not self.reader.is_alive() and not self._connected:
             self.reader = None
             self._update_controls()
@@ -749,6 +770,32 @@ class OscilloscopePanel(QFrame):
 
     def is_continuous(self) -> bool:
         return bool(self._connected and not self._stream_paused)
+
+    # ---------------------------------------------------- waveform reference
+    def set_reference_waveform(
+        self, waveform, *, channel: int = 1, point_name: str = "", select_channel: bool = True
+    ) -> bool:
+        """Exibe a onda correta salva para o ponto selecionado."""
+        channel = max(1, min(int(channel or 1), 4))
+        if select_channel:
+            self.channel_combo.setCurrentIndex(channel - 1)
+            self.scope_display.set_active_channel(channel)
+        return self.scope_display.set_reference_waveform(
+            waveform, channel=channel, name=point_name
+        )
+
+    def clear_reference_waveform(self) -> None:
+        self.scope_display.clear_reference_waveform()
+
+    def current_waveform(self, channel: int | None = None):
+        """Retorna uma cópia serializável da curva exibida atualmente."""
+        if channel is None:
+            channel = self.channel_combo.currentIndex() + 1
+        return self.scope_display.current_waveform(int(channel))
+
+    def waveform_similarity(self) -> float | None:
+        channel = self.channel_combo.currentIndex() + 1
+        return self.scope_display.waveform_similarity(channel)
 
     # --------------------------------------------------------------- misc UI
     def toggle_collapsed(self) -> None:

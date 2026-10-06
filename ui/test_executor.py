@@ -70,6 +70,9 @@ class BoardPreview(QFrame):
         self._pixmap = QPixmap()
         self._point = None
         self._refdes = ""
+        # Todos os pontos visíveis no preview. A seleção serve apenas para
+        # destacar um deles; não é necessária para exibir os marcadores.
+        self._points = []
         self.setObjectName("boardPreview")
         self.setMinimumSize(300, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -85,6 +88,24 @@ class BoardPreview(QFrame):
         self._pixmap = QPixmap()
         self._point = None
         self._refdes = ""
+        self._points = []
+        self.update()
+
+    def set_test_points(self, points):
+        """Exibe todos os pontos da placa de uma só vez.
+
+        Aceita objetos TestPoint ou tuplas (x, y, refdes).
+        """
+        normalized = []
+        for point in points or []:
+            try:
+                x = float(getattr(point, "x", point[0] if isinstance(point, (tuple, list)) else 0))
+                y = float(getattr(point, "y", point[1] if isinstance(point, (tuple, list)) else 0))
+                refdes = str(getattr(point, "refdes", point[2] if isinstance(point, (tuple, list)) and len(point) > 2 else "") or "")
+            except Exception:
+                continue
+            normalized.append((x, y, refdes))
+        self._points = normalized
         self.update()
 
     def set_test_point(self, x, y, refdes=""):
@@ -124,30 +145,39 @@ class BoardPreview(QFrame):
         y0 = area.y() + (area.height() - scaled.height()) // 2
         painter.drawPixmap(x0, y0, scaled)
 
+        sx = scaled.width() / max(self._pixmap.width(), 1)
+        sy = scaled.height() / max(self._pixmap.height(), 1)
+
+        # Desenha TODOS os pontos automaticamente.
+        for x, y, refdes in self._points:
+            px = x0 + int(x * sx)
+            py = y0 + int(y * sy)
+            painter.setPen(QPen(QColor("#EF4444"), 2))
+            painter.setBrush(QColor(229, 57, 53, 165))
+            painter.drawEllipse(px - 5, py - 5, 10, 10)
+
+            if refdes:
+                painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+                fm = painter.fontMetrics()
+                label_rect = fm.boundingRect(refdes)
+                label_rect.adjust(-4, -2, 4, 2)
+                label_rect.moveTopLeft(QPoint(px + 7, py - 18))
+                painter.fillRect(label_rect, QColor(11, 18, 32, 205))
+                painter.setPen(QColor("#F8FAFC"))
+                painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, refdes)
+
+        # Se houver seleção, destaca sem esconder os demais.
         if self._point is None:
             return
 
-        sx = scaled.width() / max(self._pixmap.width(), 1)
-        sy = scaled.height() / max(self._pixmap.height(), 1)
         px = x0 + int(self._point[0] * sx)
         py = y0 + int(self._point[1] * sy)
-
-        painter.setPen(QPen(QColor("#EF4444"), 3))
-        painter.setBrush(QColor(239, 68, 68, 45))
+        painter.setPen(QPen(QColor("#FDE047"), 3))
+        painter.setBrush(QColor(253, 224, 71, 45))
         painter.drawEllipse(px - 12, py - 12, 24, 24)
-
         painter.setPen(QPen(QColor("#111827"), 2))
         painter.setBrush(QColor("#FDE047"))
         painter.drawEllipse(px - 4, py - 4, 8, 8)
-
-        if self._refdes:
-            fm = painter.fontMetrics()
-            label_rect = fm.boundingRect(self._refdes)
-            label_rect.adjust(-7, -4, 7, 4)
-            label_rect.moveTopLeft(QPoint(px + 14, py - 28))
-            painter.fillRect(label_rect, QColor("#111827"))
-            painter.setPen(QColor("#F8FAFC"))
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, self._refdes)
 
 
 class BoardSelectDialog(QDialog):
@@ -676,26 +706,32 @@ class TestExecutor(QWidget):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("RESULTADOS")
+        title = QLabel("PONTOS DO TESTE")
         title.setObjectName("sectionTitle")
-        self.results_summary = QLabel("Aguardando teste")
+        self.results_summary = QLabel("Selecione uma placa")
         self.results_summary.setObjectName("mutedText")
         header.addWidget(title)
         header.addStretch()
         header.addWidget(self.results_summary)
 
+        # Lista propositalmente simples: nesta tela o operador precisa apenas
+        # identificar o ponto, saber o valor alvo, acompanhar o valor medido e
+        # enxergar o estado. Detalhes ficam no Mapeamento / Referências.
         self.results_table = QTableWidget(0, 4)
         self.results_table.setObjectName("resultsTable")
-        self.results_table.setHorizontalHeaderLabels(["Status", "Etapa", "Ponto", "Valor"])
+        self.results_table.setHorizontalHeaderLabels(["Ponto", "Esperado", "Medido", "Status"])
         self.results_table.verticalHeader().setVisible(False)
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.results_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.results_table.setAlternatingRowColors(True)
+        self.results_table.setShowGrid(False)
+        self.results_table.verticalHeader().setDefaultSectionSize(36)
         self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.results_table.itemSelectionChanged.connect(self._on_basic_point_selected)
 
         progress_box = QFrame()
         progress_box.setObjectName("infoBox")
@@ -1082,12 +1118,15 @@ class TestExecutor(QWidget):
             self.selected_plan = None
             self.lbl_plan.setText("Nenhum plano selecionado")
             self.lbl_plan_meta.setText("Etapas: —")
-            self.results_table.setRowCount(0)
 
         self.lbl_board.setText(board.name)
         machine_text = f"  •  Máquina: {board.machine.name}" if board.machine else ""
         self.lbl_board_sn.setText(f"SN: {board.serial_number}{machine_text}")
         self.load_board_preview()
+        if self.selected_plan is not None:
+            self.populate_plan_steps()
+        else:
+            self.populate_board_points()
         self.update_button_state()
 
     def load_board_preview(self):
@@ -1149,6 +1188,95 @@ class TestExecutor(QWidget):
         machine = f" | Máquina: {board.machine.name}" if board.machine else ""
         self.log(f"🔌 Placa selecionada: {board.name} (SN: {board.serial_number}){machine}")
 
+    @staticmethod
+    def _format_compact_value(value, unit):
+        if value is None:
+            return "—"
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return f"{value} {unit}".strip()
+        unit = unit or ""
+        if unit == "Hz":
+            if abs(value) >= 1_000_000:
+                return f"{value / 1_000_000:.3g} MHz"
+            if abs(value) >= 1_000:
+                return f"{value / 1_000:.3g} kHz"
+        if unit == "A" and abs(value) < 1:
+            return f"{value * 1000:.3g} mA"
+        if unit == "V" and 0 < abs(value) < 1:
+            return f"{value * 1000:.3g} mV"
+        return f"{value:.4g} {unit}".strip()
+
+    def _point_expected_basic(self, point):
+        """Retorna apenas a referência principal do ponto para a tela de teste."""
+        if point is None:
+            return "—"
+        if getattr(point, "expected_voltage_v", None) is not None:
+            return self._format_compact_value(point.expected_voltage_v, "V")
+        if getattr(point, "expected_frequency_hz", None) is not None:
+            return self._format_compact_value(point.expected_frequency_hz, "Hz")
+        if getattr(point, "expected_current_a", None) is not None:
+            return self._format_compact_value(point.expected_current_a, "A")
+        waveform = getattr(point, "expected_waveform", None)
+        if waveform:
+            return str(waveform)
+        return "—"
+
+    def populate_board_points(self):
+        """Mostra os pontos da placa mesmo antes de um plano ser selecionado."""
+        self.results_table.setRowCount(0)
+        if self.selected_board is None:
+            self.results_summary.setText("Selecione uma placa")
+            return
+
+        points = sorted(
+            list(getattr(self.selected_board, "test_points", []) or []),
+            key=lambda p: (str(getattr(p, "refdes", "")).lower(), getattr(p, "id", 0)),
+        )
+        for row, point in enumerate(points):
+            self.results_table.insertRow(row)
+            item_point = QTableWidgetItem(point.refdes or f"P{row + 1}")
+            item_point.setData(Qt.ItemDataRole.UserRole, point.id)
+            self.results_table.setItem(row, 0, item_point)
+            self.results_table.setItem(row, 1, QTableWidgetItem(self._point_expected_basic(point)))
+            self.results_table.setItem(row, 2, QTableWidgetItem("—"))
+            self.results_table.setItem(row, 3, QTableWidgetItem("Aguardando"))
+
+        # Todos os pontos ficam visíveis na imagem sem exigir seleção.
+        self.board_preview.set_test_points(points)
+        self.board_preview.clear_test_point()
+        self.preview_point.setText(f"{len(points)} ponto(s) visíveis" if points else "Ponto atual: —")
+
+        if points:
+            self.results_summary.setText(f"{len(points)} ponto(s)")
+            self.results_table.clearSelection()
+            self.results_table.setCurrentCell(-1, -1)
+        else:
+            self.results_summary.setText("Nenhum ponto cadastrado")
+
+    def _on_basic_point_selected(self):
+        """Destaca na imagem o ponto selecionado na lista simplificada."""
+        if self.selected_board is None:
+            return
+        row = self.results_table.currentRow()
+        if row < 0:
+            return
+        item = self.results_table.item(row, 0)
+        if item is None:
+            return
+        point_id = item.data(Qt.ItemDataRole.UserRole)
+        if point_id is None:
+            return
+        point = next(
+            (p for p in (getattr(self.selected_board, "test_points", []) or []) if p.id == point_id),
+            None,
+        )
+        if point is None:
+            return
+        self.board_preview.set_test_point(point.x, point.y, point.refdes)
+        self.preview_point.setText(f"Ponto atual: {point.refdes}")
+
     def select_plan(self):
         if not self.selected_board:
             QMessageBox.warning(self, "Aviso", "Selecione uma placa primeiro.")
@@ -1185,27 +1313,43 @@ class TestExecutor(QWidget):
         self.update_button_state()
 
     def populate_plan_steps(self):
+        """Lista somente as informações básicas necessárias para executar o plano."""
         self.results_table.setRowCount(0)
         if self.selected_plan is None:
-            self.results_summary.setText("Aguardando teste")
+            self.populate_board_points()
             return
 
         steps = sorted(self.selected_plan.steps, key=lambda step: step.order_index)
         for row, step in enumerate(steps):
             self.results_table.insertRow(row)
-            self.results_table.setItem(row, 0, QTableWidgetItem("○"))
-            self.results_table.setItem(row, 1, QTableWidgetItem(step.description or f"Etapa {row + 1}"))
-            refdes = step.test_point.refdes if step.test_point else "—"
-            self.results_table.setItem(row, 2, QTableWidgetItem(refdes))
+            point = step.test_point
+            refdes = point.refdes if point else "—"
+
+            point_item = QTableWidgetItem(refdes)
+            if point is not None:
+                point_item.setData(Qt.ItemDataRole.UserRole, point.id)
+            self.results_table.setItem(row, 0, point_item)
 
             expected = "—"
             if step.desired_value is not None:
-                expected = f"{step.desired_value:g} {step.unit or ''}".strip()
-                if step.tolerance is not None:
-                    expected += f" ± {step.tolerance:g}"
-            self.results_table.setItem(row, 3, QTableWidgetItem(expected))
+                expected = self._format_compact_value(step.desired_value, step.unit or "")
+            elif point is not None:
+                expected = self._point_expected_basic(point)
+            self.results_table.setItem(row, 1, QTableWidgetItem(expected))
+            self.results_table.setItem(row, 2, QTableWidgetItem("—"))
+            self.results_table.setItem(row, 3, QTableWidgetItem("Pronto"))
 
-        self.results_summary.setText(f"{len(steps)} etapas preparadas")
+        # No plano, mantém todos os pontos associados visíveis de uma vez.
+        plan_points = [step.test_point for step in steps if step.test_point is not None]
+        self.board_preview.set_test_points(plan_points)
+        self.board_preview.clear_test_point()
+        self.preview_point.setText(
+            f"{len(plan_points)} ponto(s) do plano visíveis" if plan_points else "Ponto atual: —"
+        )
+
+        self.results_summary.setText(f"{len(steps)} ponto(s) no plano")
+        self.results_table.clearSelection()
+        self.results_table.setCurrentCell(-1, -1)
 
     def update_button_state(self):
         # Mantém os botões clicáveis fora da execução.
@@ -1355,10 +1499,19 @@ class TestExecutor(QWidget):
             value = "—" if measurement.value is None else f"{measurement.value:g}"
             unit = measurement.unit or step.unit or ""
 
-            self.results_table.setItem(row, 0, QTableWidgetItem(status))
-            self.results_table.setItem(row, 1, QTableWidgetItem(step.description or "—"))
-            self.results_table.setItem(row, 2, QTableWidgetItem(refdes))
-            self.results_table.setItem(row, 3, QTableWidgetItem(f"{value} {unit}".strip()))
+            point_item = QTableWidgetItem(refdes)
+            if step.test_point is not None:
+                point_item.setData(Qt.ItemDataRole.UserRole, step.test_point.id)
+            self.results_table.setItem(row, 0, point_item)
+
+            expected = "—"
+            if step.desired_value is not None:
+                expected = self._format_compact_value(step.desired_value, step.unit or unit)
+            elif step.test_point is not None:
+                expected = self._point_expected_basic(step.test_point)
+            self.results_table.setItem(row, 1, QTableWidgetItem(expected))
+            self.results_table.setItem(row, 2, QTableWidgetItem(f"{value} {unit}".strip()))
+            self.results_table.setItem(row, 3, QTableWidgetItem(status))
 
             note = f" | {measurement.notes}" if measurement.notes else ""
             self.log(f"{status} {step.description}: {value} {unit}{note}")
@@ -1581,6 +1734,10 @@ class TestExecutor(QWidget):
         self.marker_widget = None
         if refresh and self.selected_board is not None:
             self.load_board_preview()
+            if self.selected_plan is not None:
+                self.populate_plan_steps()
+            else:
+                self.populate_board_points()
 
     def open_plan_creator(self):
         """Cria um novo plano para a placa selecionada."""

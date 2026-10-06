@@ -1,36 +1,49 @@
 {
   "presets": {
+    "Rigol MSO5074 - ASRL4": {
+      "backend": "visa",
+      "model": "Rigol MSO5074",
+      "resource": "ASRL4::INSTR",
+      "timeout_ms": 2500,
+      "reader_hz": 12,
+      "capture_waveform": true,
+      "waveform_points": 1200,
+      "baud_rate": 0
+    },
     "Rigol MSO5074 - USB/LAN": {
       "backend": "visa",
       "model": "Rigol MSO5074",
       "timeout_ms": 1800,
-      "poll_interval_ms": 500,
-      "capture_waveform": false,
-      "waveform_points": 1200
+      "reader_hz": 15,
+      "capture_waveform": true,
+      "waveform_points": 1200,
+      "baud_rate": 0
     },
     "Simulador MSO5074": {
       "backend": "mock",
       "model": "Rigol MSO5074 (Simulado)",
       "resource": "MOCK::MSO5074",
       "timeout_ms": 1000,
-      "poll_interval_ms": 500,
-      "capture_waveform": false,
-      "waveform_points": 1200
+      "reader_hz": 30,
+      "capture_waveform": true,
+      "waveform_points": 1200,
+      "baud_rate": 0
     }
   },
   "last_config": {
-    "preset": "Simulador MSO5074",
+    "preset": "Rigol MSO5074 - ASRL4",
     "backend": "visa",
-    "model": "Rigol MSO5074 (Simulado)",
+    "model": "Rigol MSO5074",
     "resource": "USB0::0x1AB1::0x0515::MS5A261500722::INSTR",
     "channel": 1,
-    "timeout_ms": 1800,
-    "poll_interval_ms": 500,
+    "timeout_ms": 2500,
+    "reader_hz": 12,
     "read_termination": "\n",
     "write_termination": "\n",
     "visa_backend": "",
-    "auto_reconnect": true,
-    "capture_waveform": false,
-    "waveform_points": 1200
+    "auto_reconnect": false,
+    "capture_waveform": true,
+    "waveform_points": 1200,
+    "baud_rate": 0
   }
 }

@@ -43,6 +43,18 @@ class RigolMSO5000(OscilloscopeBase):
         self._inst.timeout = int(self.config.get("timeout_ms", 1800))
         self._inst.read_termination = str(self.config.get("read_termination", "\n"))
         self._inst.write_termination = str(self.config.get("write_termination", "\n"))
+        # Recursos ASRL aparecem como portas seriais no VISA (ex.: ASRL4::INSTR).
+        # Quando o usuário informar um baudrate, aplicamos sem afetar USBTMC/LAN.
+        baud_rate = int(self.config.get("baud_rate", 0) or 0)
+        if resource.upper().startswith("ASRL") and baud_rate > 0:
+            try:
+                self._inst.baud_rate = baud_rate
+            except Exception:
+                logger.warning("Não foi possível aplicar baudrate %s ao recurso %s", baud_rate, resource)
+        try:
+            self._inst.chunk_size = max(int(getattr(self._inst, "chunk_size", 20480)), 102400)
+        except Exception:
+            pass
 
         try:
             idn = str(self._inst.query("*IDN?")).strip()

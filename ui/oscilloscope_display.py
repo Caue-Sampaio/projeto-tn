@@ -1,26 +1,20 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
-    QCheckBox,
-    QFrame,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QSlider,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 
 class OscilloscopeDisplay(QFrame):
-    """Mini osciloscópio virtual para PyQt6 + pyqtgraph."""
+    """Mini tela digital de osciloscópio.
+
+    O widget foi pensado para substituir a antiga área numérica sem mudar a
+    posição do ``OscilloscopePanel`` no scanner. O desenho usa pyqtgraph e só
+    recebe dados pela thread de aquisição; nenhuma operação VISA é feita aqui.
+    """
 
     start_requested = pyqtSignal()
     pause_requested = pyqtSignal(bool)
@@ -28,284 +22,464 @@ class OscilloscopeDisplay(QFrame):
     clear_requested = pyqtSignal()
     channels_changed = pyqtSignal(object)
 
+    # Cores próximas de um osciloscópio real e fáceis de distinguir no fundo escuro.
     CHANNEL_COLORS = {
-        1: "#2DD4BF",  # teal
-        2: "#FACC15",  # amarelo
-        3: "#38BDF8",  # ciano
-        4: "#E879F9",  # magenta
+        1: "#FACC15",  # amarelo
+        2: "#22D3EE",  # ciano
+        3: "#E879F9",  # magenta
+        4: "#22C55E",  # verde
     }
-    VDIV_VALUES = [0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
-    TDIV_VALUES = [1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6,
-                   1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("miniScope")
+        self.setMinimumHeight(270)
+        self.setMaximumHeight(340)
+
         self._paused = False
+        self._stopped = False
+        self._status_text = "Desconectado"
+        self._status_connected = False
+        self._status_simulated = False
         self._last_waveforms: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._last_metrics: dict[int, Any] = {}
         self._curves: dict[int, pg.PlotDataItem] = {}
+        self._channel_buttons: dict[int, QPushButton] = {}
+        self._first_frame = True
+        # Base de tempo automática: mantém poucas ondas completas visíveis
+        # mesmo quando a frequência sobe. 10 divisões horizontais, escala 1-2-5.
+        self._auto_timebase = True
+        self._target_cycles = 4.0
+        self._last_time_span: float | None = None
+
         self._build_ui()
         self._apply_style()
         self._configure_plot()
+        self._update_overlay()
 
+    # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-
-        top = QHBoxLayout()
-        title = QLabel("OSCILOSCÓPIO")
-        title.setObjectName("scopeTitle")
-        top.addWidget(title)
-        top.addStretch()
-        self.status_dot = QLabel("●")
-        self.status_dot.setObjectName("scopeStatusDot")
-        self.status_label = QLabel("Desconectado")
-        self.status_label.setObjectName("scopeStatus")
-        top.addWidget(self.status_dot)
-        top.addWidget(self.status_label)
-        root.addLayout(top)
-
-        channel_row = QHBoxLayout()
-        channel_row.addWidget(QLabel("Canais:"))
-        self.channel_checks: dict[int, QCheckBox] = {}
-        for ch in range(1, 5):
-            check = QCheckBox(f"CH{ch}")
-            check.setChecked(ch == 1)
-            check.stateChanged.connect(self._emit_channels)
-            check.setStyleSheet(f"QCheckBox {{ color: {self.CHANNEL_COLORS[ch]}; font-weight: 700; }}")
-            self.channel_checks[ch] = check
-            channel_row.addWidget(check)
-        channel_row.addStretch()
-        root.addLayout(channel_row)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(4)
 
         self.plot = pg.PlotWidget()
-        self.plot.setMinimumHeight(260)
+        self.plot.setMinimumHeight(220)
+        self.plot.setSizePolicy(self.plot.sizePolicy().horizontalPolicy(), self.plot.sizePolicy().verticalPolicy())
         root.addWidget(self.plot, 1)
 
-        controls = QHBoxLayout()
-        self.start_btn = QPushButton("▶ Iniciar")
-        self.pause_btn = QPushButton("⏸ Pausar")
-        self.stop_btn = QPushButton("⏹ Parar")
-        self.clear_btn = QPushButton("🧹 Limpar")
-        self.autoset_btn = QPushButton("AUTOSET")
-        controls.addWidget(self.start_btn)
-        controls.addWidget(self.pause_btn)
-        controls.addWidget(self.stop_btn)
-        controls.addWidget(self.clear_btn)
-        controls.addWidget(self.autoset_btn)
-        controls.addStretch()
-        root.addLayout(controls)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(4)
 
-        scales = QGridLayout()
-        scales.setHorizontalSpacing(10)
-        scales.setVerticalSpacing(4)
-        scales.addWidget(QLabel("V/div"), 0, 0)
-        self.vdiv_slider = QSlider(Qt.Orientation.Horizontal)
-        self.vdiv_slider.setRange(0, len(self.VDIV_VALUES) - 1)
-        self.vdiv_slider.setValue(self.VDIV_VALUES.index(1.0))
-        self.vdiv_label = QLabel("1 V/div")
-        self.vdiv_label.setObjectName("scopeScale")
-        scales.addWidget(self.vdiv_slider, 0, 1)
-        scales.addWidget(self.vdiv_label, 0, 2)
+        for ch in range(1, 5):
+            btn = QPushButton(f"CH{ch}")
+            btn.setObjectName(f"scopeCh{ch}")
+            btn.setCheckable(True)
+            btn.setChecked(ch == 1)
+            btn.setFixedSize(38, 22)
+            btn.setToolTip(f"Mostrar/ocultar canal {ch}")
+            btn.toggled.connect(self._emit_channels)
+            self._channel_buttons[ch] = btn
+            footer.addWidget(btn)
 
-        scales.addWidget(QLabel("Tempo/div"), 1, 0)
-        self.tdiv_slider = QSlider(Qt.Orientation.Horizontal)
-        self.tdiv_slider.setRange(0, len(self.TDIV_VALUES) - 1)
-        self.tdiv_slider.setValue(self.TDIV_VALUES.index(1e-3))
-        self.tdiv_label = QLabel("1 ms/div")
-        self.tdiv_label.setObjectName("scopeScale")
-        scales.addWidget(self.tdiv_slider, 1, 1)
-        scales.addWidget(self.tdiv_label, 1, 2)
-        root.addLayout(scales)
+        footer.addStretch(1)
 
-        metrics = QGridLayout()
-        metrics.setHorizontalSpacing(18)
-        self.metric_labels: dict[str, QLabel] = {}
-        for i, name in enumerate(("Vpp", "Vrms", "Frequência")):
-            key = name.lower()
-            title_lbl = QLabel(name)
-            title_lbl.setObjectName("metricName")
-            value_lbl = QLabel("—")
-            value_lbl.setObjectName("metricValue")
-            metrics.addWidget(title_lbl, 0, i * 2)
-            metrics.addWidget(value_lbl, 0, i * 2 + 1)
-            self.metric_labels[key] = value_lbl
-        root.addLayout(metrics)
+        self.start_btn = QPushButton("▶")
+        self.pause_btn = QPushButton("⏸")
+        self.stop_btn = QPushButton("⏹")
+        self.clear_btn = QPushButton("🧹")
+        self.autoset_btn = QPushButton("AUTO")
 
-        self.start_btn.clicked.connect(self.start_requested.emit)
+        controls = (
+            (self.start_btn, "Iniciar / continuar aquisição", 26),
+            (self.pause_btn, "Pausar aquisição", 26),
+            (self.stop_btn, "Parar aquisição", 26),
+            (self.clear_btn, "Limpar tela", 28),
+            (self.autoset_btn, "Autoescala", 42),
+        )
+        for button, tooltip, width in controls:
+            button.setObjectName("scopeMiniBtn")
+            button.setToolTip(tooltip)
+            button.setFixedSize(width, 22)
+            footer.addWidget(button)
+
+        root.addLayout(footer)
+
+        self.start_btn.clicked.connect(self._start)
         self.pause_btn.clicked.connect(self._toggle_pause)
-        self.stop_btn.clicked.connect(self.stop_requested.emit)
+        self.stop_btn.clicked.connect(self._stop)
         self.clear_btn.clicked.connect(self._clear)
         self.autoset_btn.clicked.connect(self.autoset)
-        self.vdiv_slider.valueChanged.connect(self._apply_manual_scale)
-        self.tdiv_slider.valueChanged.connect(self._apply_manual_scale)
 
     def _apply_style(self) -> None:
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QFrame#miniScope {
-                background: #0F172A;
-                border: 1px solid #334155;
-                border-radius: 10px;
-            }
-            QLabel { color: #CBD5E1; font-size: 10px; }
-            QLabel#scopeTitle { color: #2DD4BF; font-size: 13px; font-weight: 900; }
-            QLabel#scopeStatus { color: #CBD5E1; font-weight: 700; }
-            QLabel#scopeStatusDot { color: #64748B; font-size: 13px; }
-            QLabel#scopeScale, QLabel#metricValue {
-                color: #F8FAFC; font-family: Consolas, monospace; font-weight: 700;
-            }
-            QLabel#metricName { color: #64748B; font-weight: 700; }
-            QPushButton {
-                background: #172033;
-                color: #E2E8F0;
+                background: #071018;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                padding: 6px 10px;
+            }
+            QPushButton#scopeMiniBtn {
+                background: #111C2A;
+                color: #E2E8F0;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 0;
+                font-size: 10px;
                 font-weight: 700;
             }
-            QPushButton:hover { border-color: #2DD4BF; }
-            QPushButton:pressed { background: #1E293B; }
-            QSlider::groove:horizontal { height: 4px; background: #334155; border-radius: 2px; }
-            QSlider::handle:horizontal { width: 13px; margin: -5px 0; border-radius: 6px; background: #2DD4BF; }
-        """)
+            QPushButton#scopeMiniBtn:hover { border-color: #2DD4BF; }
+            QPushButton#scopeMiniBtn:pressed { background: #1E293B; }
+
+            QPushButton#scopeCh1, QPushButton#scopeCh2,
+            QPushButton#scopeCh3, QPushButton#scopeCh4 {
+                background: #111C2A;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 0;
+                font-size: 9px;
+                font-weight: 800;
+            }
+            QPushButton#scopeCh1 { color: #FACC15; }
+            QPushButton#scopeCh2 { color: #22D3EE; }
+            QPushButton#scopeCh3 { color: #E879F9; }
+            QPushButton#scopeCh4 { color: #22C55E; }
+            QPushButton#scopeCh1:checked { background: #4A4310; border-color: #FACC15; }
+            QPushButton#scopeCh2:checked { background: #073947; border-color: #22D3EE; }
+            QPushButton#scopeCh3:checked { background: #4A1E50; border-color: #E879F9; }
+            QPushButton#scopeCh4:checked { background: #123B24; border-color: #22C55E; }
+            """
+        )
 
     def _configure_plot(self) -> None:
         pg.setConfigOptions(antialias=False)
-        self.plot.setBackground("#0B1220")
+        self.plot.setBackground("#050B10")
         item = self.plot.getPlotItem()
-        item.showGrid(x=True, y=True, alpha=0.28)
-        item.setLabel("left", "Tensão", units="V")
+        item.showGrid(x=True, y=True, alpha=0.34)
+        item.setLabel("left", "V")
         item.setLabel("bottom", "Tempo", units="s")
-        item.getAxis("left").setTextPen("#94A3B8")
-        item.getAxis("bottom").setTextPen("#94A3B8")
-        item.setMenuEnabled(True)
-        item.setMouseEnabled(x=True, y=True)  # zoom e pan nativos
+        item.getAxis("left").setTextPen("#7D8DA3")
+        item.getAxis("bottom").setTextPen("#7D8DA3")
+        item.getAxis("left").setPen("#334155")
+        item.getAxis("bottom").setPen("#334155")
+        item.setMenuEnabled(False)
+        item.setMouseEnabled(x=True, y=True)
+        item.hideButtons()
+
         for ch in range(1, 5):
-            curve = item.plot([], [], pen=pg.mkPen(self.CHANNEL_COLORS[ch], width=1.6), name=f"CH{ch}")
+            curve = item.plot(
+                [], [],
+                pen=pg.mkPen(self.CHANNEL_COLORS[ch], width=1.35),
+                connect="finite",
+            )
             curve.setVisible(ch == 1)
             self._curves[ch] = curve
 
-    def _emit_channels(self) -> None:
-        channels = [ch for ch, check in self.channel_checks.items() if check.isChecked()]
+        # Métricas e estado aparecem dentro da área do gráfico, sem consumir
+        # uma nova linha do layout.
+        self._metrics_overlay = pg.TextItem(anchor=(0, 0), color="#E2E8F0")
+        self._status_overlay = pg.TextItem(anchor=(1, 0), color="#94A3B8")
+        item.addItem(self._metrics_overlay, ignoreBounds=True)
+        item.addItem(self._status_overlay, ignoreBounds=True)
+        item.getViewBox().sigRangeChanged.connect(self._position_overlays)
+
+        # Faixa inicial agradável para o modo simulado.
+        item.setXRange(0.0, 0.010, padding=0)
+        item.setYRange(-3.0, 3.0, padding=0)
+        self._position_overlays()
+
+    # -------------------------------------------------------------- channels
+    def _emit_channels(self, _checked: bool | None = None) -> None:
+        channels = self.active_channels()
         if not channels:
-            self.channel_checks[1].blockSignals(True)
-            self.channel_checks[1].setChecked(True)
-            self.channel_checks[1].blockSignals(False)
+            btn = self._channel_buttons[1]
+            btn.blockSignals(True)
+            btn.setChecked(True)
+            btn.blockSignals(False)
             channels = [1]
+
         for ch, curve in self._curves.items():
             curve.setVisible(ch in channels)
         self.channels_changed.emit(channels)
-        self._update_metrics_display()
+        self._update_overlay()
 
     def active_channels(self) -> list[int]:
-        return [ch for ch, c in self.channel_checks.items() if c.isChecked()]
+        return [ch for ch, btn in self._channel_buttons.items() if btn.isChecked()]
+
+    def set_active_channel(self, channel: int) -> None:
+        """Garante que o canal escolhido para captura também esteja visível."""
+        channel = max(1, min(int(channel), 4))
+        button = self._channel_buttons[channel]
+        if not button.isChecked():
+            button.setChecked(True)
+
+    # -------------------------------------------------------------- controls
+    def set_paused(self, paused: bool, *, emit_signal: bool = False) -> None:
+        """Atualiza visualmente o estado de pausa sem depender de clique do usuário.
+
+        Usado pelo painel quando o operador troca de ponto: a forma de onda fica
+        congelada enquanto a ponta de prova é reposicionada.
+        """
+        self._paused = bool(paused)
+        if not self._paused:
+            self._stopped = False
+        self.pause_btn.setText("▶" if self._paused else "⏸")
+        if emit_signal:
+            self.pause_requested.emit(self._paused)
+
+    def _start(self) -> None:
+        self._stopped = False
+        if self._paused:
+            self.set_paused(False, emit_signal=True)
+        self.start_requested.emit()
 
     def _toggle_pause(self) -> None:
-        self._paused = not self._paused
-        self.pause_btn.setText("▶ Continuar" if self._paused else "⏸ Pausar")
-        self.pause_requested.emit(self._paused)
+        self._stopped = False
+        self.set_paused(not self._paused, emit_signal=True)
 
-    def set_status(self, text: str, connected: bool = False, simulated: bool = False) -> None:
-        self.status_label.setText(text)
-        if simulated:
-            color = "#FACC15"
-        elif connected:
-            color = "#22C55E"
-        else:
-            color = "#64748B"
-        self.status_dot.setStyleSheet(f"color: {color};")
-
-    def update_frame(self, frame) -> None:
-        if self._paused:
-            return
-        self._last_waveforms = frame.waveforms or self._last_waveforms
-        self._last_metrics = frame.readings or self._last_metrics
-        for ch, (x, y) in frame.waveforms.items():
-            curve = self._curves.get(ch)
-            if curve is not None and x.size and y.size:
-                # pyqtgraph é mais eficiente com numpy e setData, sem recriar curva.
-                curve.setData(x, y, connect="finite")
-        self._update_metrics_display()
-
-    def _current_metric_object(self):
-        channels = self.active_channels()
-        ch = channels[0] if channels else 1
-        return self._last_metrics.get(ch)
-
-    def _update_metrics_display(self) -> None:
-        obj = self._current_metric_object()
-        if obj is None:
-            return
-        if isinstance(obj, dict):
-            vpp = obj.get("vpp")
-            vrms = obj.get("vrms")
-            freq = obj.get("freq")
-        else:
-            vpp = getattr(obj, "vpp_v", None)
-            vrms = getattr(obj, "vrms_v", None)
-            freq = getattr(obj, "frequency_hz", None)
-        self.metric_labels["vpp"].setText("—" if vpp is None else f"{vpp:.4g} V")
-        self.metric_labels["vrms"].setText("—" if vrms is None else f"{vrms:.4g} V")
-        self.metric_labels["frequência"].setText(self._fmt_freq(freq))
-
-    @staticmethod
-    def _fmt_freq(value: float | None) -> str:
-        if value is None:
-            return "—"
-        if abs(value) >= 1e6:
-            return f"{value/1e6:.3f} MHz"
-        if abs(value) >= 1e3:
-            return f"{value/1e3:.3f} kHz"
-        return f"{value:.3f} Hz"
+    def _stop(self) -> None:
+        self._stopped = True
+        self.set_paused(True, emit_signal=False)
+        self.stop_requested.emit()
 
     def _clear(self) -> None:
         for curve in self._curves.values():
             curve.setData([], [])
         self._last_waveforms.clear()
         self._last_metrics.clear()
-        for lbl in self.metric_labels.values():
-            lbl.setText("—")
+        self._first_frame = True
+        self._last_time_span = None
+        self._update_overlay()
         self.clear_requested.emit()
 
-    @staticmethod
-    def _fmt_time_div(value: float) -> str:
-        if value < 1e-3:
-            return f"{value*1e6:g} µs/div"
-        if value < 1:
-            return f"{value*1e3:g} ms/div"
-        return f"{value:g} s/div"
+    # --------------------------------------------------------------- status
+    def set_status(self, text: str, *, connected: bool = False, simulated: bool = False) -> None:
+        self._status_text = text
+        self._status_connected = bool(connected)
+        self._status_simulated = bool(simulated)
+        self._update_overlay()
 
-    def _apply_manual_scale(self) -> None:
-        vdiv = self.VDIV_VALUES[self.vdiv_slider.value()]
-        tdiv = self.TDIV_VALUES[self.tdiv_slider.value()]
-        self.vdiv_label.setText(f"{vdiv:g} V/div")
-        self.tdiv_label.setText(self._fmt_time_div(tdiv))
-        # 8 divisões verticais e 10 horizontais.
-        self.plot.setYRange(-4.0 * vdiv, 4.0 * vdiv, padding=0)
-        x_max = 10.0 * tdiv
-        self.plot.setXRange(0.0, x_max, padding=0)
+    # -------------------------------------------------------------- plotting
+    def update_frame(self, frame) -> None:
+        if self._paused or self._stopped:
+            return
+
+        if frame.waveforms:
+            self._last_waveforms = frame.waveforms
+        if frame.readings:
+            self._last_metrics.update(frame.readings)
+
+        for ch, (x, y) in (frame.waveforms or {}).items():
+            curve = self._curves.get(ch)
+            if curve is None:
+                continue
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
+            size = min(x.size, y.size)
+            if size <= 1:
+                continue
+            x = x[:size]
+            y = y[:size]
+            # O instrumento pode devolver origem absoluta/negativa. Na mini tela
+            # usamos sempre o primeiro ponto como t=0 para a curva não "andar".
+            x = x - x[0]
+            self._last_waveforms[ch] = (x, y)
+            curve.setData(x, y)
+
+        self._update_overlay()
+
+        # Ajusta continuamente apenas a BASE DE TEMPO. Isso evita que sinais de
+        # frequência alta fiquem comprimidos no mesmo intervalo de 10 ms.
+        if self._auto_timebase and self._last_waveforms:
+            self._apply_frequency_timebase()
+
+        if self._first_frame and self._last_waveforms:
+            self._first_frame = False
+            self._autoset_vertical()
+
+    def _metric_object(self):
+        channels = self.active_channels()
+        for ch in channels:
+            obj = self._last_metrics.get(ch)
+            if obj is not None:
+                return ch, obj
+        return (channels[0] if channels else 1), None
+
+    def _extract_metrics(self, obj) -> tuple[float | None, float | None, float | None]:
+        if obj is None:
+            return None, None, None
+        if isinstance(obj, dict):
+            return obj.get("vpp"), obj.get("vrms"), obj.get("freq")
+        return (
+            getattr(obj, "vpp_v", None),
+            getattr(obj, "vrms_v", None),
+            getattr(obj, "frequency_hz", None),
+        )
+
+    def _update_overlay(self) -> None:
+        ch, obj = self._metric_object()
+        vpp, vrms, freq = self._extract_metrics(obj)
+        color = self.CHANNEL_COLORS.get(ch, "#FACC15")
+
+        self._metrics_overlay.setHtml(
+            "<div style='font-family:Consolas;font-size:9px;'>"
+            f"<span style='color:{color};font-weight:700;'>CH{ch}</span> &nbsp;"
+            f"<span style='color:#94A3B8;'>Vpp</span> <b>{self._fmt_voltage(vpp)}</b> &nbsp;"
+            f"<span style='color:#94A3B8;'>Vrms</span> <b>{self._fmt_voltage(vrms)}</b> &nbsp;"
+            f"<span style='color:#94A3B8;'>F</span> <b>{self._fmt_freq(freq)}</b>"
+            "</div>"
+        )
+
+        if self._status_simulated:
+            status_color = "#FACC15"
+        elif self._status_connected:
+            status_color = "#22C55E"
+        else:
+            status_color = "#64748B"
+        self._status_overlay.setHtml(
+            "<div style='font-family:Segoe UI;font-size:9px;'>"
+            f"<span style='color:{status_color};'>●</span> "
+            f"<span style='color:#CBD5E1;'>{self._status_text}</span>"
+            "</div>"
+        )
+        self._position_overlays()
+
+    def _position_overlays(self, *_args) -> None:
+        if not hasattr(self, "_metrics_overlay"):
+            return
+        view = self.plot.getPlotItem().getViewBox()
+        (xmin, xmax), (ymin, ymax) = view.viewRange()
+        dx = max(1e-12, xmax - xmin)
+        dy = max(1e-12, ymax - ymin)
+        self._metrics_overlay.setPos(xmin + 0.015 * dx, ymax - 0.04 * dy)
+        self._status_overlay.setPos(xmax - 0.015 * dx, ymax - 0.04 * dy)
+
+    @staticmethod
+    def _nice_time_per_div(seconds_per_div: float) -> float:
+        """Arredonda a escala para a sequência clássica 1-2-5 do osciloscópio."""
+        if not np.isfinite(seconds_per_div) or seconds_per_div <= 0:
+            return 1e-3
+
+        exponent = float(np.floor(np.log10(seconds_per_div)))
+        base = 10.0 ** exponent
+        normalized = seconds_per_div / base
+
+        if normalized <= 1.0:
+            nice = 1.0
+        elif normalized <= 2.0:
+            nice = 2.0
+        elif normalized <= 5.0:
+            nice = 5.0
+        else:
+            nice = 10.0
+        return nice * base
+
+    def _active_frequency(self) -> float | None:
+        """Retorna a frequência válida do primeiro canal ativo com medição."""
+        for ch in self.active_channels():
+            obj = self._last_metrics.get(ch)
+            _vpp, _vrms, freq = self._extract_metrics(obj)
+            if freq is None:
+                continue
+            try:
+                value = float(freq)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value > 0:
+                return value
+        return None
+
+    def _available_x_span(self) -> float | None:
+        spans: list[float] = []
+        for ch in self.active_channels():
+            data = self._last_waveforms.get(ch)
+            if data is None:
+                continue
+            x, _y = data
+            if x.size < 2:
+                continue
+            finite = x[np.isfinite(x)]
+            if finite.size < 2:
+                continue
+            span = float(np.max(finite) - np.min(finite))
+            if span > 0:
+                spans.append(span)
+        return max(spans) if spans else None
+
+    def _apply_frequency_timebase(self) -> None:
+        """Ajusta o eixo X à frequência para manter ~4 ciclos na tela.
+
+        A tela tem 10 divisões horizontais. A escala escolhida é arredondada
+        para 1-2-5 (ex.: 1 ms/div, 2 ms/div, 5 ms/div, 100 us/div).
+        """
+        freq = self._active_frequency()
+        available = self._available_x_span()
+        if freq is None or available is None:
+            return
+
+        period = 1.0 / freq
+        desired_total = max(period * self._target_cycles, 1e-9)
+        per_div = self._nice_time_per_div(desired_total / 10.0)
+        visible_span = per_div * 10.0
+
+        # Nunca pede uma janela maior do que o bloco de amostras recebido.
+        visible_span = min(visible_span, available)
+
+        # Evita ficar recalculando a faixa por pequenas oscilações de frequência.
+        if self._last_time_span is not None:
+            delta = abs(visible_span - self._last_time_span) / max(self._last_time_span, 1e-12)
+            if delta < 0.08:
+                return
+
+        self._last_time_span = visible_span
+        self.plot.setXRange(0.0, visible_span, padding=0)
+
+    def _autoset_vertical(self) -> None:
+        """Autoescala somente a amplitude, preservando a base de tempo automática."""
+        channels = self.active_channels()
+        ys: list[np.ndarray] = []
+        for ch in channels:
+            data = self._last_waveforms.get(ch)
+            if data is None:
+                continue
+            _x, y = data
+            if y.size > 1:
+                ys.append(y)
+        if not ys:
+            return
+
+        y_all = np.concatenate(ys)
+        finite_y = y_all[np.isfinite(y_all)]
+        if finite_y.size < 2:
+            return
+
+        ymin, ymax = float(np.min(finite_y)), float(np.max(finite_y))
+        yr = max(1e-6, ymax - ymin)
+        self.plot.setYRange(ymin - 0.12 * yr, ymax + 0.28 * yr, padding=0)
 
     def autoset(self) -> None:
-        channels = self.active_channels()
-        xs, ys = [], []
-        for ch in channels:
-            if ch in self._last_waveforms:
-                x, y = self._last_waveforms[ch]
-                if x.size:
-                    xs.append(x)
-                if y.size:
-                    ys.append(y)
-        if not xs or not ys:
-            return
-        x_all = np.concatenate(xs)
-        y_all = np.concatenate(ys)
-        if not x_all.size or not y_all.size:
-            return
-        ymin, ymax = float(np.min(y_all)), float(np.max(y_all))
-        xmin, xmax = float(np.min(x_all)), float(np.max(x_all))
-        yr = max(1e-6, ymax - ymin)
-        xr = max(1e-9, xmax - xmin)
-        self.plot.setYRange(ymin - 0.08 * yr, ymax + 0.08 * yr, padding=0)
-        self.plot.setXRange(xmin, xmax, padding=0)
+        """AUTO: reajusta amplitude e recalcula imediatamente a base de tempo."""
+        self._last_time_span = None
+        self._apply_frequency_timebase()
+        self._autoset_vertical()
+
+    @staticmethod
+    def _fmt_voltage(value: float | None) -> str:
+        if value is None:
+            return "—"
+        value = float(value)
+        if abs(value) < 1.0:
+            return f"{value * 1e3:.2f} mV"
+        return f"{value:.3g} V"
+
+    @staticmethod
+    def _fmt_freq(value: float | None) -> str:
+        if value is None:
+            return "—"
+        value = float(value)
+        if abs(value) >= 1e6:
+            return f"{value / 1e6:.3g} MHz"
+        if abs(value) >= 1e3:
+            return f"{value / 1e3:.3g} kHz"
+        return f"{value:.3g} Hz"

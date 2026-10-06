@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from .dashboard import Dashboard
 from .placa_tab import PlacaTab
 from .test_executor import TestExecutor
+from .reference_measurements import ReferenceMeasurements
 
 
 class SidebarButton(QPushButton):
@@ -111,12 +112,14 @@ class MainWindow(QMainWindow):
         self.btn_dashboard = SidebarButton("Dashboard", "📊")
         self.btn_placas = SidebarButton("Placas", "🔌")
         self.btn_testes = SidebarButton("Testes", "🧪")
+        self.btn_referencias = SidebarButton("Referências", "📐")
         self.btn_logout = SidebarButton("Sair", "🚪")
 
         self.buttons = [
             self.btn_dashboard,
             self.btn_placas,
             self.btn_testes,
+            self.btn_referencias,
         ]
 
         self.btn_dashboard.clicked.connect(
@@ -140,6 +143,13 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self.btn_referencias.clicked.connect(
+            lambda: self.switch_tab(
+                3,
+                self.btn_referencias,
+            )
+        )
+
         self.btn_logout.clicked.connect(
             self.close
         )
@@ -152,6 +162,9 @@ class MainWindow(QMainWindow):
         )
         self.sidebar_layout.addWidget(
             self.btn_testes
+        )
+        self.sidebar_layout.addWidget(
+            self.btn_referencias
         )
 
         self.sidebar_layout.addStretch()
@@ -208,6 +221,11 @@ class MainWindow(QMainWindow):
             self.current_user,
         )
 
+        self.referencias_view = ReferenceMeasurements(
+            self.session,
+            self.current_user,
+        )
+
         def import_to_test(board):
             self.testes_view.import_board_for_test(
                 board
@@ -237,6 +255,9 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(
             self.testes_view
         )
+        self.stack.addWidget(
+            self.referencias_view
+        )
 
         self.content_layout.addWidget(
             self.stack
@@ -258,6 +279,18 @@ class MainWindow(QMainWindow):
 
         elif index == 1:
             self.placas_view.refresh_boards()
+
+        elif index == 3:
+            self.referencias_view.refresh_boards()
+
+    def closeEvent(self, event):
+        # Encerra a thread/VISA da aba de referências antes de fechar o app.
+        try:
+            if hasattr(self, "referencias_view"):
+                self.referencias_view.shutdown()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def handle_dashboard_action(self, action_id):
         """Navega para a área correspondente sem iniciar ações automaticamente.

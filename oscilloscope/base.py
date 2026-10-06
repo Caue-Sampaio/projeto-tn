@@ -44,11 +44,14 @@ class OscilloscopeReading:
 
     @property
     def display_text(self) -> str:
+        """Resumo compacto das três medições principais do ponto."""
         parts: list[str] = []
         if self.vpp_v is not None:
-            parts.append(self._fmt(self.vpp_v, "Vpp"))
+            parts.append(f"Vpp {self._fmt(self.vpp_v, 'V')}")
+        if self.vrms_v is not None:
+            parts.append(f"Vrms {self._fmt(self.vrms_v, 'V')}")
         if self.frequency_hz is not None:
-            parts.append(self._fmt(self.frequency_hz, "Hz"))
+            parts.append(f"F {self._fmt(self.frequency_hz, 'Hz')}")
         return " • ".join(parts) if parts else f"CH{self.channel} —"
 
     def to_dict(self) -> dict[str, Any]:

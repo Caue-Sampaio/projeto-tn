@@ -1,6 +1,6 @@
 # db/models.py
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, Boolean
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, Boolean, UniqueConstraint
 from datetime import datetime
 from typing import List, Optional
 
@@ -42,6 +42,9 @@ class BoardModel(Base):
     boards: Mapped[List["BoardUnit"]] = relationship("BoardUnit", back_populates="board_model")
     plans: Mapped[List["TestPlan"]] = relationship("TestPlan", back_populates="board_model", cascade="all, delete-orphan")
     components: Mapped[List["Component"]] = relationship("Component", back_populates="board_model", cascade="all, delete-orphan")
+    oscilloscope_references: Mapped[List["OscilloscopeReference"]] = relationship(
+        "OscilloscopeReference", back_populates="board_model", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"BoardModel(id={self.id}, name='{self.name}', version='{self.version}')"
@@ -190,6 +193,61 @@ class OscilloscopeCapture(Base):
         return (
             f"OscilloscopeCapture(id={self.id}, point={self.test_point_id}, "
             f"channel=CH{self.channel}, vpp={self.vpp_v})"
+        )
+
+
+class OscilloscopeReference(Base):
+    """Valores corretos usados como padrão para comparar placas do mesmo modelo.
+
+    A referência pertence ao *modelo* da placa e ao RefDes, não ao número de
+    série. Assim uma placa boa pode servir como padrão para outras unidades do
+    mesmo modelo durante o reparo.
+    """
+
+    __tablename__ = "oscilloscope_references"
+    __table_args__ = (
+        UniqueConstraint("board_model_id", "refdes", name="uq_scope_reference_model_refdes"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    board_model_id: Mapped[int] = mapped_column(ForeignKey("board_models.id"), index=True)
+    refdes: Mapped[str] = mapped_column(String(50), index=True)
+
+    # Placa boa usada na última gravação da referência (rastreabilidade).
+    source_board_id: Mapped[Optional[int]] = mapped_column(ForeignKey("board_units.id"), nullable=True)
+    source_serial: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    channel: Mapped[int] = mapped_column(Integer, default=1)
+    vpp_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vrms_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vmax_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vmin_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vavg_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    period_s: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duty_cycle_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vertical_offset_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Tolerâncias percentuais usadas na tela atual de diagnóstico/comparação.
+    tolerance_vpp_pct: Mapped[float] = mapped_column(Float, default=10.0)
+    tolerance_vrms_pct: Mapped[float] = mapped_column(Float, default=10.0)
+    tolerance_frequency_pct: Mapped[float] = mapped_column(Float, default=5.0)
+
+    oscilloscope_id: Mapped[Optional[str]] = mapped_column(String(250), nullable=True)
+    waveform_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    board_model: Mapped["BoardModel"] = relationship(
+        "BoardModel", back_populates="oscilloscope_references"
+    )
+    source_board: Mapped[Optional["BoardUnit"]] = relationship("BoardUnit")
+
+    def __repr__(self):
+        return (
+            f"OscilloscopeReference(model={self.board_model_id}, "
+            f"refdes='{self.refdes}', vpp={self.vpp_v}, vrms={self.vrms_v}, "
+            f"freq={self.frequency_hz})"
         )
 
 

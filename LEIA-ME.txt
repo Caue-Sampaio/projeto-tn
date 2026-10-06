@@ -1,0 +1,25 @@
+TECH NORD — LAUNCHER DO SISTEMA
+
+Arquivos:
+- Iniciar_TechNord.bat  -> detecta .venv/venv e executa main.py com pythonw.
+- Iniciar_TechNord.vbs  -> chama o BAT sem abrir janela preta do CMD.
+- TechNord.ico          -> ícone multi-resolução para o atalho.
+- TechNord_icone.png    -> versão PNG do ícone.
+
+COMO INSTALAR
+1. Copie estes 4 arquivos para a MESMA PASTA onde está o main.py.
+2. Se você usa ambiente virtual, mantenha-o com o nome ".venv" ou "venv" nessa pasta.
+3. Dê dois cliques em Iniciar_TechNord.vbs para testar.
+4. Para criar um atalho:
+   - Clique com o botão direito em Iniciar_TechNord.vbs.
+   - Escolha "Mostrar mais opções" > "Enviar para" > "Área de trabalho (criar atalho)".
+   - Na área de trabalho, botão direito no atalho > Propriedades.
+   - Clique em "Alterar Ícone..." e selecione TechNord.ico.
+   - Renomeie o atalho para "Tech Nord Eletrosistem" ou o nome desejado.
+
+OBSERVAÇÃO
+O launcher usa caminhos relativos, então não é necessário editar C:\caminho\... manualmente.
+Se o projeto for movido para outra pasta, mantenha BAT, VBS, ICO e main.py juntos.
+
+DEPENDÊNCIAS IDENTIFICADAS NO PROJETO
+PyQt6, SQLAlchemy, reportlab, schedule, bcrypt, pyvisa, pyvisa-py e pyusb.

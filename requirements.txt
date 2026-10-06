@@ -6,3 +6,5 @@ bcrypt==5.0.0
 pyvisa>=1.14
 pyvisa-py>=0.7
 pyusb>=1.2.1
+numpy>=1.26
+pyqtgraph>=0.13.7

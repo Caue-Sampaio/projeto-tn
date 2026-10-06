@@ -22,7 +22,7 @@
     "preset": "Simulador MSO5074",
     "backend": "visa",
     "model": "Rigol MSO5074 (Simulado)",
-    "resource": "ASRL4::INSTR",
+    "resource": "USB0::0x1AB1::0x0515::MS5A261500722::INSTR",
     "channel": 1,
     "timeout_ms": 1800,
     "poll_interval_ms": 500,

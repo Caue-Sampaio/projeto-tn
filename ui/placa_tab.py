@@ -1257,8 +1257,11 @@ class MachineCatalogCard(QFrame):
         text = QVBoxLayout(); text.setSpacing(2)
         title = QLabel(machine.name); title.setObjectName("machineCardTitle")
         code = machine.code or f"ID #{machine.id}"
-        meta = QLabel(f"{code}  •  {len(boards)} placa(s)"); meta.setObjectName("machineCardMeta")
-        text.addWidget(title); text.addWidget(meta)
+        self._machine_code = code
+        self._total_board_count = len(boards)
+        self.meta_label = QLabel(f"{code}  •  {len(boards)} placa(s)")
+        self.meta_label.setObjectName("machineCardMeta")
+        text.addWidget(title); text.addWidget(self.meta_label)
         h.addLayout(text, 1)
 
         state = StatusBadge("CADASTRADA", "neutral")
@@ -1287,26 +1290,52 @@ class MachineCatalogCard(QFrame):
         header.mousePressEvent = self._header_press
 
         self.boards_frame = QFrame(); self.boards_frame.setObjectName("machineBoardsArea")
-        boards_layout = QVBoxLayout(self.boards_frame)
-        boards_layout.setContentsMargins(12, 2, 12, 12); boards_layout.setSpacing(7)
-        if boards:
-            for board in boards:
-                row = BoardCatalogCard(
-                    board, last_runs.get(board.id), selected=(board.id == selected_board_id), parent=self
-                )
-                row.clicked.connect(self.boardClicked)
-                row.doubleClicked.connect(self.boardDoubleClicked)
-                row.detailsRequested.connect(self.boardDetailsRequested)
-                row.testRequested.connect(self.boardTestRequested)
-                row.moveRequested.connect(self.boardMoveRequested)
-                row.deleteRequested.connect(self.boardDeleteRequested)
-                boards_layout.addWidget(row)
-        else:
-            empty = QLabel("Nenhuma placa vinculada a esta máquina")
-            empty.setObjectName("machineNoBoards")
-            boards_layout.addWidget(empty)
+        self.boards_layout = QVBoxLayout(self.boards_frame)
+        self.boards_layout.setContentsMargins(12, 2, 12, 12); self.boards_layout.setSpacing(7)
+        self.board_cards = {}
+        for board in boards:
+            row = BoardCatalogCard(
+                board, last_runs.get(board.id), selected=(board.id == selected_board_id), parent=self
+            )
+            row.clicked.connect(self.boardClicked)
+            row.doubleClicked.connect(self.boardDoubleClicked)
+            row.detailsRequested.connect(self.boardDetailsRequested)
+            row.testRequested.connect(self.boardTestRequested)
+            row.moveRequested.connect(self.boardMoveRequested)
+            row.deleteRequested.connect(self.boardDeleteRequested)
+            self.board_cards[int(board.id)] = row
+            self.boards_layout.addWidget(row)
+
+        self.empty_boards_label = QLabel("Nenhuma placa vinculada a esta máquina")
+        self.empty_boards_label.setObjectName("machineNoBoards")
+        self.empty_boards_label.setVisible(not bool(boards))
+        self.boards_layout.addWidget(self.empty_boards_label)
+
         self.boards_frame.setVisible(self._expanded)
         root.addWidget(self.boards_frame)
+
+    def apply_board_filter(self, visible_board_ids, *, force_expand=False):
+        """Filtra as placas sem destruir/recriar os widgets do card.
+
+        Isso evita o flicker que ocorria quando o catálogo inteiro era montado
+        novamente a cada tecla da pesquisa ou alteração de filtro.
+        """
+        visible_ids = {int(bid) for bid in visible_board_ids}
+        for bid, card in self.board_cards.items():
+            card.setVisible(bid in visible_ids)
+
+        visible_count = len(visible_ids)
+        self.meta_label.setText(f"{self._machine_code}  •  {visible_count} placa(s)")
+        self.empty_boards_label.setText(
+            "Nenhuma placa corresponde aos filtros nesta máquina"
+            if self.board_cards else
+            "Nenhuma placa vinculada a esta máquina"
+        )
+        self.empty_boards_label.setVisible(visible_count == 0)
+
+        expanded_visually = bool(force_expand or self._expanded)
+        self.boards_frame.setVisible(expanded_visually)
+        self.expand_btn.setText("⌄" if expanded_visually else "›")
 
     def _header_press(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -2416,74 +2445,47 @@ class PlacaTab(QWidget):
         self._board_cards = {}
 
     def _rebuild_catalog(self):
-        if not hasattr(self, "catalog_layout"):
+        """Reconstrói os widgets somente quando os DADOS do inventário mudam.
+
+        Pesquisa, filtros e ordenação não passam mais por este método. Eles
+        apenas mostram/ocultam e reordenam widgets já existentes, evitando o
+        flash percebido no Windows a cada atualização visual da lista.
+        """
+        if not hasattr(self, "catalog_scroll"):
             return
 
-        # Reconstrução atômica do catálogo: evita que o Qt pinte estados
-        # intermediários enquanto todos os cards são removidos e recriados.
-        # Isso reduz bastante o flicker no Windows durante busca/filtros.
-        repaint_target = getattr(self, "catalog_scroll", self)
-        repaint_target.setUpdatesEnabled(False)
+        machines = list(getattr(self, "_catalog_machines", []))
+        boards = list(getattr(self, "_catalog_boards", []))
+        boards_by_machine = {}
+        for board in boards:
+            boards_by_machine.setdefault(board.machine_id, []).append(board)
+
+        old_scroll_value = self.catalog_scroll.verticalScrollBar().value()
+        self.catalog_host.setUpdatesEnabled(False)
         try:
-            self._clear_catalog_layout()
-            rows = self._filtered_catalog()
+            # Remove somente em uma atualização real de dados (CRUD/sincronização).
+            while self.catalog_layout.count():
+                item = self.catalog_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
 
-            # Mantém máquinas e placas órfãs em seções visualmente separadas.
-            # "Placas sem máquina" nunca participa do grid principal: ela sempre
-            # aparece abaixo das máquinas, ocupando toda a largura disponível.
-            machine_rows = [(machine, boards) for machine, boards in rows if machine is not None]
-            orphan_boards = []
-            for machine, boards in rows:
-                if machine is None:
-                    orphan_boards.extend(boards)
+            self._machine_cards = {}
+            self._board_cards = {}
+            self._orphan_board_cards = {}
+            self._orphan_section = None
 
-            total_boards = sum(len(bs) for _, bs in machine_rows) + len(orphan_boards)
-            visible_groups = len(machine_rows) + (1 if orphan_boards else 0)
-            self.catalog_result_label.setText(
-                f"{visible_groups} grupo(s) • {total_boards} placa(s) visível(is)"
-            )
-
-            no_data = (
-                len(getattr(self, "_catalog_machines", [])) == 0
-                and len(getattr(self, "_catalog_boards", [])) == 0
-            )
-            if not rows:
-                self.catalog_scroll.setVisible(False)
-                self.catalog_empty.setVisible(True)
-                self.empty_title.setText(
-                    "Nenhuma máquina cadastrada" if no_data else "Nenhum resultado encontrado"
-                )
-                self.empty_text.setText(
-                    "Cadastre a primeira máquina para começar a organizar suas placas."
-                    if no_data
-                    else "Ajuste a busca ou os filtros para visualizar outros itens."
-                )
-                return
-
-            self.catalog_empty.setVisible(False)
-            self.catalog_scroll.setVisible(True)
-
-            columns = self._catalog_columns()
-            self._last_catalog_columns = columns
-
-            # ── Máquinas ──────────────────────────────────────────────
-            # LISTA: 1 máquina por linha, cards completos.
-            # GRID: 2 máquinas compactas por linha. Ao expandir uma máquina ela
-            # ocupa a largura toda, e suas placas continuam uma abaixo da outra.
-            grid_row = 0
-            grid_col = 0
-            search_active = bool(self.filter_bar.search.text().strip())
-
-            for machine, boards in machine_rows:
-                expanded = machine.id in self._expanded_machine_ids or search_active
-                compact = self.catalog_view_mode == "grid" and columns > 1 and not expanded
-
+            row_index = 0
+            for machine in machines:
+                machine_boards = boards_by_machine.get(machine.id, [])
                 card = MachineCatalogCard(
                     machine,
-                    boards,
+                    machine_boards,
                     self._last_runs,
-                    expanded=expanded,
-                    compact=compact,
+                    expanded=(machine.id in self._expanded_machine_ids),
+                    compact=False,
                     selected_machine=(
                         self.current_machine is not None
                         and self.current_board is None
@@ -2501,35 +2503,14 @@ class PlacaTab(QWidget):
                 card.boardTestRequested.connect(self._test_board_by_id)
                 card.boardMoveRequested.connect(self._move_board_by_id)
                 card.boardDeleteRequested.connect(self._delete_board_by_id)
-                self._machine_cards[machine.id] = card
 
-                if columns == 1:
-                    self.catalog_layout.addWidget(card, grid_row, 0)
-                    grid_row += 1
-                elif expanded:
-                    # Um card expandido precisa de largura para as placas em lista.
-                    if grid_col != 0:
-                        grid_row += 1
-                        grid_col = 0
-                    self.catalog_layout.addWidget(card, grid_row, 0, 1, columns)
-                    grid_row += 1
-                else:
-                    self.catalog_layout.addWidget(card, grid_row, grid_col)
-                    grid_col += 1
-                    if grid_col >= columns:
-                        grid_row += 1
-                        grid_col = 0
+                self._machine_cards[int(machine.id)] = card
+                self._board_cards.update(card.board_cards)
+                self.catalog_layout.addWidget(card, row_index, 0)
+                row_index += 1
 
-            if grid_col != 0:
-                grid_row += 1
-
-            for col in range(columns):
-                self.catalog_layout.setColumnStretch(col, 1)
-
-            # ── Placas sem máquina: seção própria abaixo ───────────────
+            orphan_boards = boards_by_machine.get(None, [])
             if orphan_boards:
-                orphan_row = grid_row
-
                 section = QFrame()
                 section.setObjectName("orphanSection")
                 section_layout = QVBoxLayout(section)
@@ -2539,13 +2520,12 @@ class PlacaTab(QWidget):
                 title_row = QHBoxLayout()
                 title_row.setContentsMargins(0, 0, 0, 0)
                 title_row.setSpacing(8)
-
                 title = QLabel("PLACAS SEM MÁQUINA")
                 title.setObjectName("orphanSectionTitle")
-                subtitle = QLabel(f"{len(orphan_boards)} placa(s) aguardando vínculo")
-                subtitle.setObjectName("orphanSectionMeta")
+                self._orphan_subtitle = QLabel(f"{len(orphan_boards)} placa(s) aguardando vínculo")
+                self._orphan_subtitle.setObjectName("orphanSectionMeta")
                 title_row.addWidget(title)
-                title_row.addWidget(subtitle)
+                title_row.addWidget(self._orphan_subtitle)
                 title_row.addStretch(1)
                 section_layout.addLayout(title_row)
 
@@ -2553,27 +2533,108 @@ class PlacaTab(QWidget):
                 orphan_list = QVBoxLayout(orphan_host)
                 orphan_list.setContentsMargins(0, 0, 0, 0)
                 orphan_list.setSpacing(7)
-
-                # Placas sem máquina seguem o mesmo padrão das placas vinculadas:
-                # sempre uma abaixo da outra. Isso evita cards lado a lado ocupando
-                # largura desnecessária e mantém a leitura visual consistente.
                 for board in orphan_boards:
                     bc = BoardCatalogCard(
                         board,
                         self._last_runs.get(board.id),
-                        selected=(self.current_board and self.current_board.id == board.id),
+                        selected=bool(self.current_board and self.current_board.id == board.id),
                     )
                     self._wire_board_card(bc)
-                    self._board_cards[board.id] = bc
+                    self._orphan_board_cards[int(board.id)] = bc
+                    self._board_cards[int(board.id)] = bc
                     orphan_list.addWidget(bc)
 
                 section_layout.addWidget(orphan_host)
-                self.catalog_layout.addWidget(section, orphan_row, 0, 1, columns)
+                self._orphan_section = section
+                self.catalog_layout.addWidget(section, row_index, 0)
 
-    
+            self._last_catalog_columns = 1
         finally:
-            repaint_target.setUpdatesEnabled(True)
-            repaint_target.update()
+            self.catalog_host.setUpdatesEnabled(True)
+
+        # Aplica pesquisa/filtros sem recriar nada.
+        self._apply_catalog_filter_in_place()
+        bar = self.catalog_scroll.verticalScrollBar()
+        bar.setValue(min(old_scroll_value, bar.maximum()))
+
+    def _apply_catalog_filter_in_place(self):
+        """Aplica busca, filtros e ordenação reaproveitando os cards existentes."""
+        if not hasattr(self, "catalog_scroll"):
+            return
+
+        rows = self._filtered_catalog()
+        machine_rows = [(machine, boards) for machine, boards in rows if machine is not None]
+        orphan_boards = []
+        for machine, boards in rows:
+            if machine is None:
+                orphan_boards.extend(boards)
+
+        total_boards = sum(len(bs) for _, bs in machine_rows) + len(orphan_boards)
+        visible_groups = len(machine_rows) + (1 if orphan_boards else 0)
+        self.catalog_result_label.setText(
+            f"{visible_groups} grupo(s) • {total_boards} placa(s) visível(is)"
+        )
+
+        no_data = (
+            len(getattr(self, "_catalog_machines", [])) == 0
+            and len(getattr(self, "_catalog_boards", [])) == 0
+        )
+        if not rows:
+            self.catalog_scroll.setVisible(False)
+            self.catalog_empty.setVisible(True)
+            self.empty_title.setText(
+                "Nenhuma máquina cadastrada" if no_data else "Nenhum resultado encontrado"
+            )
+            self.empty_text.setText(
+                "Cadastre a primeira máquina para começar a organizar suas placas."
+                if no_data else
+                "Ajuste a busca ou os filtros para visualizar outros itens."
+            )
+            return
+
+        self.catalog_empty.setVisible(False)
+        self.catalog_scroll.setVisible(True)
+
+        visible_machine_ids = {int(machine.id) for machine, _ in machine_rows}
+        visible_orphan_ids = {int(board.id) for board in orphan_boards}
+        search_active = bool(self.filter_bar.search.text().strip())
+
+        self.catalog_host.setUpdatesEnabled(False)
+        try:
+            # Retira os itens do layout, mas NÃO destrói widgets.
+            while self.catalog_layout.count():
+                self.catalog_layout.takeAt(0)
+
+            row_index = 0
+            for machine, boards in machine_rows:
+                card = self._machine_cards.get(int(machine.id))
+                if card is None:
+                    continue
+                card.setVisible(True)
+                card.apply_board_filter(
+                    [board.id for board in boards],
+                    force_expand=search_active,
+                )
+                self.catalog_layout.addWidget(card, row_index, 0)
+                row_index += 1
+
+            for mid, card in self._machine_cards.items():
+                if mid not in visible_machine_ids:
+                    card.setVisible(False)
+
+            if self._orphan_section is not None:
+                for bid, card in self._orphan_board_cards.items():
+                    card.setVisible(bid in visible_orphan_ids)
+                self._orphan_section.setVisible(bool(visible_orphan_ids))
+                if hasattr(self, "_orphan_subtitle"):
+                    self._orphan_subtitle.setText(
+                        f"{len(visible_orphan_ids)} placa(s) aguardando vínculo"
+                    )
+                if visible_orphan_ids:
+                    self.catalog_layout.addWidget(self._orphan_section, row_index, 0)
+        finally:
+            self.catalog_host.setUpdatesEnabled(True)
+            self.catalog_host.update()
 
     def _wire_board_card(self, card):
         card.clicked.connect(self._select_board_by_id)
@@ -2633,7 +2694,9 @@ class PlacaTab(QWidget):
         self._select_machine_by_id(machine_id); self.delete_machine()
 
     def filter_boards(self):
-        self._rebuild_catalog()
+        # Busca/filtros agora são aplicados sobre os widgets existentes.
+        # Nada é destruído/recriado a cada tecla.
+        self._apply_catalog_filter_in_place()
 
     def _update_selection_actions(self, kind):
         # Ações agora ficam nos próprios cards/menu contextual.

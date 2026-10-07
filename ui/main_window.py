@@ -472,13 +472,18 @@ class MainWindow(QMainWindow):
             btn.setChecked(False)
 
         button.setChecked(True)
+
+        # Máquinas/Placas mantém o catálogo em memória. Entrar na página não
+        # dispara mais refresh/reconstrução; os métodos de CRUD já atualizam a
+        # lista quando os dados realmente mudam.
+        if index == 1:
+            self.stack.setCurrentIndex(index)
+            return
+
         self.stack.setCurrentIndex(index)
 
         if index == 0:
             self.dashboard_view.refresh_stats()
-
-        elif index == 1:
-            self.placas_view.refresh_boards()
 
         elif index == 3:
             self.referencias_view.refresh_boards()
@@ -488,12 +493,11 @@ class MainWindow(QMainWindow):
             btn.setChecked(btn is button)
 
     def open_boards_list(self):
-        """Volta para a rota principal /placas."""
+        """Volta para a rota principal /placas sem exibir montagem intermediária."""
         self._mark_sidebar(self.btn_placas)
         self.context_bar.setVisible(False)
         self.current_context_board_id = None
         self.stack.setCurrentIndex(1)
-        self.placas_view.refresh_boards()
 
     def open_board_details(self, board_id: int):
         """Abre a página reutilizável /placas/:id/detalhes."""

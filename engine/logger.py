@@ -95,10 +95,26 @@ class TestSystemLogger:
         self._configure_third_party_loggers()
     
     def _add_console_handler(self):
-        """Adiciona handler para console com cores"""
-        console_handler = logging.StreamHandler(sys.stdout)
+        """Adiciona log em console somente quando explicitamente solicitado.
+
+        A aplicação principal é gráfica. Manter um StreamHandler de console na
+        execução normal é desnecessário e, no Windows, pode contribuir para a
+        janela de terminal aparecer atrás da interface. Para depuração, use:
+
+            set TECHNORD_CONSOLE_LOG=1
+
+        antes de iniciar o programa.
+        """
+        if os.environ.get("TECHNORD_CONSOLE_LOG") != "1":
+            return
+
+        stream = sys.stdout or sys.stderr
+        if stream is None:
+            return
+
+        console_handler = logging.StreamHandler(stream)
         console_handler.setLevel(logging.INFO)
-        
+
         formatter = ColoredFormatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%H:%M:%S'

@@ -24,6 +24,43 @@ from utils.backup_manager import BackupManager
 from engine.logger import setup_logging
 import logging
 
+
+def _prepare_gui_process():
+    """Evita janela de console visível em execução normal da interface no Windows.
+
+    O aplicativo é gráfico. Quando iniciado por associação com ``python.exe``,
+    o Windows pode criar uma janela de console atrás do PyQt. Durante repaints
+    mais pesados essa janela pode aparecer por alguns milissegundos.
+
+    Se o console pertence somente a este processo, ele é ocultado. Consoles
+    compartilhados (por exemplo, CMD/PowerShell usado para depuração) são
+    preservados. Defina TECHNORD_KEEP_CONSOLE=1 para nunca ocultar o console.
+    """
+    if os.name != "nt" or os.environ.get("TECHNORD_KEEP_CONSOLE") == "1":
+        return
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        hwnd = kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+
+        # Não esconda o terminal do desenvolvedor quando o Python foi iniciado
+        # dentro de um CMD/PowerShell já existente.
+        process_ids = (ctypes.c_ulong * 16)()
+        attached = kernel32.GetConsoleProcessList(process_ids, len(process_ids))
+        if attached <= 1:
+            user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        # A interface nunca deve deixar de iniciar por causa dessa proteção.
+        pass
+
+
+_prepare_gui_process()
+
 # Configura logging
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -43,6 +43,7 @@ from utils.image_paths import resolve_image_path, heal_board_images, import_imag
 from ui.image_marker import ImageMarker
 from ui.plan_editor import PlanEditor
 from ui.guided_scope_client import GuidedScopeClient
+from ui.marker_graphics import draw_marker, normalize_marker_shape, normalize_marker_size
 
 
 logger = logging.getLogger(__name__)
@@ -98,19 +99,23 @@ class BoardPreview(QFrame):
         self.update()
 
     def set_test_points(self, points):
-        """Exibe todos os pontos da placa de uma só vez.
-
-        Aceita objetos TestPoint ou tuplas (x, y, refdes).
-        """
+        """Exibe todos os pontos da imagem ativa, preservando a aparência de cada marcador."""
         normalized = []
         for point in points or []:
             try:
-                x = float(getattr(point, "x", point[0] if isinstance(point, (tuple, list)) else 0))
-                y = float(getattr(point, "y", point[1] if isinstance(point, (tuple, list)) else 0))
-                refdes = str(getattr(point, "refdes", point[2] if isinstance(point, (tuple, list)) and len(point) > 2 else "") or "")
+                if isinstance(point, (tuple, list)):
+                    x = float(point[0]); y = float(point[1])
+                    refdes = str(point[2] if len(point) > 2 else "")
+                    shape = "circle"; size = 16; color = "#E53935"
+                else:
+                    x = float(getattr(point, "x", 0)); y = float(getattr(point, "y", 0))
+                    refdes = str(getattr(point, "refdes", "") or "")
+                    shape = normalize_marker_shape(getattr(point, "marker_shape", None))
+                    size = normalize_marker_size(getattr(point, "marker_size", None))
+                    color = getattr(point, "marker_color", None) or "#E53935"
             except Exception:
                 continue
-            normalized.append((x, y, refdes))
+            normalized.append({"x": x, "y": y, "refdes": refdes, "shape": shape, "size": size, "color": color})
         self._points = normalized
         self.update()
 
@@ -154,20 +159,25 @@ class BoardPreview(QFrame):
         sx = scaled.width() / max(self._pixmap.width(), 1)
         sy = scaled.height() / max(self._pixmap.height(), 1)
 
-        # Desenha TODOS os pontos automaticamente.
-        for x, y, refdes in self._points:
-            px = x0 + int(x * sx)
-            py = y0 + int(y * sy)
-            painter.setPen(QPen(QColor("#EF4444"), 2))
-            painter.setBrush(QColor(229, 57, 53, 165))
-            painter.drawEllipse(px - 5, py - 5, 10, 10)
+        # Desenha TODOS os pontos automaticamente, respeitando formato/tamanho/cor.
+        for point in self._points:
+            px = x0 + int(point["x"] * sx)
+            py = y0 + int(point["y"] * sy)
+            # O tamanho é proporcional ao zoom da imagem, com um mínimo para continuar legível.
+            scaled_size = max(8, int(round(point["size"] * (sx + sy) / 2.0)))
+            draw_marker(
+                painter, px, py,
+                shape=point["shape"], size=scaled_size,
+                color=QColor(point["color"]), selected=False,
+            )
 
+            refdes = point["refdes"]
             if refdes:
                 painter.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
                 fm = painter.fontMetrics()
                 label_rect = fm.boundingRect(refdes)
                 label_rect.adjust(-4, -2, 4, 2)
-                label_rect.moveTopLeft(QPoint(px + 7, py - 18))
+                label_rect.moveTopLeft(QPoint(px + scaled_size // 2 + 4, py - 18))
                 painter.fillRect(label_rect, QColor(11, 18, 32, 205))
                 painter.setPen(QColor("#F8FAFC"))
                 painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, refdes)
@@ -409,6 +419,7 @@ class TestExecutor(QWidget):
         self.marker_page = None
         self.marker_widget = None
         self.is_test_running = False
+        self.current_test_image_slot = 1
 
         # Diagnóstico guiado: o plano define a ordem; as referências definem
         # os valores corretos; o Rigol fornece a medição real de cada etapa.
@@ -798,6 +809,18 @@ class TestExecutor(QWidget):
         self.preview_meta.setObjectName("mutedText")
         header.addWidget(title)
         header.addStretch()
+
+        self.preview_slot1_btn = QPushButton("Imagem 1")
+        self.preview_slot2_btn = QPushButton("Imagem 2")
+        for btn in (self.preview_slot1_btn, self.preview_slot2_btn):
+            btn.setObjectName("ghostButton")
+            btn.setCheckable(True)
+            btn.setFixedHeight(30)
+        self.preview_slot1_btn.setChecked(True)
+        self.preview_slot1_btn.clicked.connect(lambda: self.set_test_image_slot(1))
+        self.preview_slot2_btn.clicked.connect(lambda: self.set_test_image_slot(2))
+        header.addWidget(self.preview_slot1_btn)
+        header.addWidget(self.preview_slot2_btn)
         header.addWidget(self.preview_meta)
 
         self.board_preview = BoardPreview()
@@ -1230,6 +1253,7 @@ class TestExecutor(QWidget):
     def _set_board(self, board):
         self._close_marker_inline(refresh=False)
         self.selected_board = board
+        self.current_test_image_slot = 1
 
         if (
             self.selected_plan is not None
@@ -1249,26 +1273,59 @@ class TestExecutor(QWidget):
             self.populate_board_points()
         self.update_button_state()
 
+    def _board_images_by_slot(self):
+        """Retorna os dois slots de imagem sem depender da ordem da relação ORM."""
+        slots = {1: None, 2: None}
+        if self.selected_board is None:
+            return slots
+        leftovers = []
+        for image in list(getattr(self.selected_board, "images", []) or []):
+            desc = str(getattr(image, "description", "") or "").upper()
+            if "SLOT_1" in desc or desc.endswith("1"):
+                slots[1] = image
+            elif "SLOT_2" in desc or desc.endswith("2"):
+                slots[2] = image
+            else:
+                leftovers.append(image)
+        for slot in (1, 2):
+            if slots[slot] is None and leftovers:
+                slots[slot] = leftovers.pop(0)
+        return slots
+
+    def set_test_image_slot(self, slot: int):
+        self.current_test_image_slot = 2 if int(slot) == 2 else 1
+        self.preview_slot1_btn.blockSignals(True)
+        self.preview_slot2_btn.blockSignals(True)
+        self.preview_slot1_btn.setChecked(self.current_test_image_slot == 1)
+        self.preview_slot2_btn.setChecked(self.current_test_image_slot == 2)
+        self.preview_slot1_btn.blockSignals(False)
+        self.preview_slot2_btn.blockSignals(False)
+        self.load_board_preview()
+        if self.selected_plan is not None:
+            self.populate_plan_steps()
+        else:
+            self.populate_board_points()
+
     def load_board_preview(self):
         self.board_preview.clear_image()
-        self.preview_meta.setText("Sem imagem")
+        self.preview_meta.setText(f"Imagem {self.current_test_image_slot}")
         self.preview_point.setText("Ponto atual: —")
 
         if self.selected_board is None or not self.selected_board.images:
             return
 
-        # Regrava os caminhos como absolutos (quando o arquivo é encontrado)
         missing = heal_board_images(self.session, self.selected_board)
+        image = self._board_images_by_slot().get(self.current_test_image_slot)
+        if image is None:
+            self.preview_meta.setText(f"Imagem {self.current_test_image_slot} não cadastrada")
+            return
+        if image not in missing:
+            self.board_preview.load_image(image.path)
+            self.preview_meta.setText(f"Imagem {self.current_test_image_slot} • {Path(image.path).name}")
+            return
 
-        for image in self.selected_board.images:
-            if image not in missing:
-                self.board_preview.load_image(image.path)
-                self.preview_meta.setText(Path(image.path).name)
-                return
-
-        # Nenhuma imagem encontrada: pede para o usuário apontar o arquivo
-        self.preview_meta.setText("Imagem cadastrada não encontrada")
-        self._relocate_missing_image(missing[0])
+        self.preview_meta.setText(f"Imagem {self.current_test_image_slot} não encontrada")
+        self._relocate_missing_image(image)
 
     def _relocate_missing_image(self, image):
         resp = QMessageBox.question(
@@ -1377,8 +1434,12 @@ class TestExecutor(QWidget):
             self.results_summary.setText("Selecione uma placa")
             return
 
+        points = [
+            p for p in (getattr(self.selected_board, "test_points", []) or [])
+            if int(getattr(p, "image_slot", 1) or 1) == self.current_test_image_slot
+        ]
         points = sorted(
-            list(getattr(self.selected_board, "test_points", []) or []),
+            points,
             key=lambda p: (str(getattr(p, "refdes", "")).lower(), getattr(p, "id", 0)),
         )
         for row, point in enumerate(points):
@@ -1483,7 +1544,11 @@ class TestExecutor(QWidget):
             self.results_table.setItem(row, 3, QTableWidgetItem("Pendente"))
 
         # No plano, mantém todos os pontos associados visíveis de uma vez.
-        plan_points = [step.test_point for step in steps if step.test_point is not None]
+        plan_points = [
+            step.test_point for step in steps
+            if step.test_point is not None
+            and int(getattr(step.test_point, "image_slot", 1) or 1) == self.current_test_image_slot
+        ]
         self.board_preview.set_test_points(plan_points)
         self.board_preview.clear_test_point()
         self.preview_point.setText(
@@ -1644,6 +1709,11 @@ class TestExecutor(QWidget):
         point = step.test_point
         reference = self._guided_reference(step)
         self.current_reference = reference
+
+        # Se a etapa pertence à segunda imagem, troca o preview automaticamente.
+        point_slot = int(getattr(point, "image_slot", 1) or 1)
+        if point_slot != self.current_test_image_slot:
+            self.set_test_image_slot(point_slot)
 
         channel = int(getattr(reference, "channel", 1) or 1) if reference is not None else 1
         self.scope_client.set_channel(channel)

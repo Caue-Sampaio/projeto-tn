@@ -18,6 +18,8 @@ from .dashboard import Dashboard
 from .placa_tab import PlacaTab
 from .test_executor import TestExecutor
 from .reference_measurements import ReferenceMeasurements
+from .placa_detalhes import PlacaDetalhes
+from db.models import BoardUnit
 
 
 class SidebarButton(QPushButton):
@@ -239,27 +241,26 @@ class MainWindow(QMainWindow):
         # Ícones em caracteres simples para manter aparência estável no Windows.
         self.btn_dashboard = SidebarButton("Dashboard", "▦")
         self.btn_placas = SidebarButton("Placas", "▣")
-        self.btn_testes = SidebarButton("Testes", "▶")
-        self.btn_referencias = SidebarButton("Referências", "◇")
+        self.btn_configuracoes = SidebarButton("Configurações", "⚙")
+        self.btn_configuracoes.setCheckable(False)
         self.btn_logout = SidebarButton("Sair", "↪")
 
+        # Testes e Referências permanecem carregados no QStackedWidget, mas não
+        # aparecem mais como rotas principais da sidebar. O acesso ocorre pelo
+        # contexto de uma placa em /placas/:id/detalhes.
         self.buttons = [
             self.btn_dashboard,
             self.btn_placas,
-            self.btn_testes,
-            self.btn_referencias,
         ]
 
         self.btn_dashboard.clicked.connect(lambda: self.switch_tab(0, self.btn_dashboard))
         self.btn_placas.clicked.connect(lambda: self.switch_tab(1, self.btn_placas))
-        self.btn_testes.clicked.connect(lambda: self.switch_tab(2, self.btn_testes))
-        self.btn_referencias.clicked.connect(lambda: self.switch_tab(3, self.btn_referencias))
+        self.btn_configuracoes.clicked.connect(self._show_settings_info)
         self.btn_logout.clicked.connect(self.close)
 
         self.sidebar_layout.addWidget(self.btn_dashboard)
         self.sidebar_layout.addWidget(self.btn_placas)
-        self.sidebar_layout.addWidget(self.btn_testes)
-        self.sidebar_layout.addWidget(self.btn_referencias)
+        self.sidebar_layout.addWidget(self.btn_configuracoes)
         self.sidebar_layout.addStretch(1)
 
         # ── Usuário ────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ class MainWindow(QMainWindow):
         else:
             header_layout.setContentsMargins(16, 12, 12, 12)
 
-        for btn in [*self.buttons, self.btn_logout]:
+        for btn in [*self.buttons, self.btn_configuracoes, self.btn_logout]:
             btn.set_compact(compact)
 
         if compact:
@@ -402,14 +403,10 @@ class MainWindow(QMainWindow):
         )
 
         def import_to_test(board):
-            self.testes_view.import_board_for_test(
-                board
-            )
-
-            self.switch_tab(
-                2,
-                self.btn_testes,
-            )
+            # Compatibilidade com a lógica antiga: se alguma ação interna ainda
+            # chamar import_board, preservamos a execução, mas o acesso visual
+            # principal agora ocorre por PlacaDetalhes.
+            self.open_board_test(board.id)
 
         self.placas_view = PlacaTab(
             self.session,
@@ -417,32 +414,60 @@ class MainWindow(QMainWindow):
             current_user=self.current_user,
         )
 
+        # Página dinâmica reutilizável: equivalente a /placas/:id/detalhes.
+        self.placa_detalhes_view = PlacaDetalhes(
+            self.session,
+            self.current_user,
+        )
+
         self.dashboard_view.action_requested.connect(
             self.handle_dashboard_action
         )
+        self.placas_view.board_details_requested.connect(self.open_board_details)
+        self.placa_detalhes_view.back_requested.connect(self.open_boards_list)
+        self.placa_detalhes_view.test_requested.connect(self.open_board_test)
+        self.placa_detalhes_view.preferences_requested.connect(self.open_board_preferences)
+        self.placa_detalhes_view.board_updated.connect(self._on_board_updated)
 
-        self.stack.addWidget(
-            self.dashboard_view
-        )
-        self.stack.addWidget(
-            self.placas_view
-        )
-        self.stack.addWidget(
-            self.testes_view
-        )
-        self.stack.addWidget(
-            self.referencias_view
-        )
+        self.stack.addWidget(self.dashboard_view)       # 0
+        self.stack.addWidget(self.placas_view)          # 1
+        self.stack.addWidget(self.testes_view)          # 2 (rota interna)
+        self.stack.addWidget(self.referencias_view)     # 3 (rota interna)
+        self.stack.addWidget(self.placa_detalhes_view)  # 4 /placas/:id/detalhes
 
-        self.content_layout.addWidget(
-            self.stack
+        # Barra contextual das rotas internas ocultas da sidebar. Mantém o
+        # placaId visível e permite voltar aos detalhes sem perder contexto.
+        self.current_context_board_id = None
+        self.context_bar = QFrame()
+        self.context_bar.setObjectName("contextBar")
+        self.context_bar.setStyleSheet(
+            "QFrame#contextBar { background:#0F172A; border-bottom:1px solid #1E293B; }"
+            "QLabel { color:#CBD5E1; font:600 11px 'Segoe UI'; }"
+            "QPushButton { background:#152033; color:#E2E8F0; border:1px solid #2A3B55; "
+            "border-radius:6px; min-height:30px; padding:0 12px; font-weight:600; }"
+            "QPushButton:hover { border-color:#2DD4BF; color:#FFFFFF; }"
         )
+        cb = QHBoxLayout(self.context_bar)
+        cb.setContentsMargins(12, 7, 12, 7)
+        cb.setSpacing(10)
+        back_details = QPushButton("← Detalhes da placa")
+        back_details.clicked.connect(self.return_to_context_details)
+        self.context_route_label = QLabel("")
+        cb.addWidget(back_details)
+        cb.addWidget(self.context_route_label)
+        cb.addStretch()
+        self.context_bar.setVisible(False)
+
+        self.content_layout.addWidget(self.context_bar)
+        self.content_layout.addWidget(self.stack)
 
         self.main_layout.addWidget(
             self.content_area
         )
 
     def switch_tab(self, index, button):
+        if hasattr(self, "context_bar"):
+            self.context_bar.setVisible(False)
         for btn in self.buttons:
             btn.setChecked(False)
 
@@ -458,6 +483,70 @@ class MainWindow(QMainWindow):
         elif index == 3:
             self.referencias_view.refresh_boards()
 
+    def _mark_sidebar(self, button=None):
+        for btn in self.buttons:
+            btn.setChecked(btn is button)
+
+    def open_boards_list(self):
+        """Volta para a rota principal /placas."""
+        self._mark_sidebar(self.btn_placas)
+        self.context_bar.setVisible(False)
+        self.current_context_board_id = None
+        self.stack.setCurrentIndex(1)
+        self.placas_view.refresh_boards()
+
+    def open_board_details(self, board_id: int):
+        """Abre a página reutilizável /placas/:id/detalhes."""
+        board = self.session.get(BoardUnit, int(board_id))
+        if board is None:
+            QMessageBox.warning(self, "Placa", "Placa não encontrada.")
+            self.open_boards_list()
+            return
+        self._mark_sidebar(self.btn_placas)
+        self.context_bar.setVisible(False)
+        self.current_context_board_id = board.id
+        self.placa_detalhes_view.load_board(board.id)
+        self.stack.setCurrentIndex(4)
+
+    def open_board_test(self, board_id: int):
+        """Equivalente desktop a /teste?placaId=XXX."""
+        board = self.session.get(BoardUnit, int(board_id))
+        if board is None:
+            QMessageBox.warning(self, "Teste", "Placa não encontrada.")
+            return
+        self._mark_sidebar(self.btn_placas)
+        self.current_context_board_id = board.id
+        self.context_route_label.setText(f"/teste?placaId={board.id}  •  {board.name}")
+        self.context_bar.setVisible(True)
+        self.testes_view.import_board_for_test(board)
+        self.stack.setCurrentIndex(2)
+
+    def open_board_preferences(self, board_id: int):
+        """Equivalente desktop a /preferencias?placaId=XXX."""
+        board = self.session.get(BoardUnit, int(board_id))
+        if board is None:
+            QMessageBox.warning(self, "Preferências", "Placa não encontrada.")
+            return
+        self._mark_sidebar(self.btn_placas)
+        self.current_context_board_id = board.id
+        self.context_route_label.setText(f"/preferencias?placaId={board.id}  •  {board.name}")
+        self.context_bar.setVisible(True)
+        if hasattr(self.referencias_view, "open_for_board"):
+            self.referencias_view.open_for_board(board.id)
+        else:
+            # Compatibilidade com versões anteriores do widget.
+            self.referencias_view._board_changed(board)
+        self.stack.setCurrentIndex(3)
+
+    def return_to_context_details(self):
+        if self.current_context_board_id is not None:
+            self.open_board_details(self.current_context_board_id)
+        else:
+            self.open_boards_list()
+
+    def _on_board_updated(self, board_id: int):
+        self.placas_view.refresh_boards(select_board_id=board_id)
+
     def closeEvent(self, event):
         # Encerra a thread/VISA da aba de referências antes de fechar o app.
         try:
@@ -468,42 +557,25 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def handle_dashboard_action(self, action_id):
-        """Navega para a área correspondente sem iniciar ações automaticamente.
+        """Cards do dashboard navegam para o fluxo centrado em Placas.
 
-        Os cards do dashboard funcionam somente como atalhos de navegação.
-        Seleção de placa, cadastro de pontos, importação de imagem, edição de
-        plano e geração de relatório continuam sendo iniciados pelo usuário
-        dentro da aba apropriada.
+        Testes e Referências deixaram de ser rotas globais. Quando já existe
+        uma placa selecionada, abrimos diretamente seus detalhes; caso contrário
+        mostramos a listagem de placas para o usuário escolher uma.
         """
-
-        # Área de cadastro/consulta de placas e imagens.
-        if action_id in {"projects", "import_image"}:
-            self.switch_tab(
-                1,
-                self.btn_placas,
-            )
-            return
-
-        # Área operacional de mapeamento, planos, execução e relatórios.
-        if action_id in {"mapping", "pins", "report"}:
-            self.switch_tab(
-                2,
-                self.btn_testes,
-            )
-            return
-
-        # Compatibilidade com atalhos antigos que possam voltar ao dashboard.
-        if action_id == "components":
-            self.switch_tab(
-                1,
-                self.btn_placas,
-            )
-
-        elif action_id == "settings":
+        if action_id == "settings":
             self._show_settings_info()
-
-        elif action_id == "help":
+            return
+        if action_id == "help":
             self._show_help()
+            return
+
+        board = getattr(self.placas_view, "current_board", None)
+        if action_id in {"mapping", "pins", "report"} and board is not None:
+            self.open_board_details(board.id)
+            return
+
+        self.open_boards_list()
 
     def _dashboard_import_image(self):
         self.switch_tab(
@@ -551,15 +623,9 @@ class MainWindow(QMainWindow):
         board = self.placas_view.current_board
 
         if board is not None:
-            self.testes_view.import_board_for_test(
-                board
-            )
-
-        self.switch_tab(
-            2,
-            self.btn_testes,
-        )
-
+            self.open_board_test(board.id)
+        else:
+            self.open_boards_list()
         return board
 
     def _dashboard_mapping(self):
@@ -607,10 +673,11 @@ class MainWindow(QMainWindow):
         )
 
     def _dashboard_report(self):
-        self.switch_tab(
-            2,
-            self.btn_testes,
-        )
+        board = getattr(self.placas_view, "current_board", None)
+        if board is not None:
+            self.open_board_test(board.id)
+        else:
+            self.open_boards_list()
 
         if self.testes_view.last_run is None:
             QMessageBox.information(

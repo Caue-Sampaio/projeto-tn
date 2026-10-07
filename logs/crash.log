@@ -94,3 +94,17 @@ Traceback (most recent call last):
     board_name = self.plan.board.name if self.plan.board else "—"
                                          ^^^^^^^^^^^^^^^
 AttributeError: 'TestPlan' object has no attribute 'board'
+
+--- 2026-10-07 21:01:07
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\oscilloscope_panel.py", line 621, in _drain_reader_queue
+    def _drain_reader_queue(self) -> None:
+    
+KeyboardInterrupt
+
+--- 2026-10-07 21:32:12
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\guided_scope_client.py", line 87, in _drain
+    def _drain(self) -> None:
+    
+KeyboardInterrupt

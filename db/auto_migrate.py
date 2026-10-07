@@ -38,6 +38,27 @@ def ensure_schema(engine):
         "VARCHAR(7) NOT NULL DEFAULT '#E53935'",
     )
 
+    _add_column(
+        engine,
+        "test_points",
+        "marker_shape",
+        "VARCHAR(20) NOT NULL DEFAULT 'circle'",
+    )
+    _add_column(
+        engine,
+        "test_points",
+        "marker_size",
+        "INTEGER NOT NULL DEFAULT 16",
+    )
+
+    # Suporte a duas imagens por placa. Pontos antigos ficam na Imagem 1.
+    _add_column(
+        engine,
+        "test_points",
+        "image_slot",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
+
     # Resumo da última captura do osciloscópio no próprio ponto.
     # O histórico completo é criado em oscilloscope_captures por create_all().
     _add_column(engine, "test_points", "last_scope_channel", "INTEGER")
@@ -53,5 +74,23 @@ def ensure_schema(engine):
             text(
                 "UPDATE test_points SET marker_color = '#E53935' "
                 "WHERE marker_color IS NULL OR TRIM(marker_color) = ''"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE test_points SET image_slot = 1 "
+                "WHERE image_slot IS NULL OR image_slot NOT IN (1, 2)"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE test_points SET marker_shape = 'circle' "
+                "WHERE marker_shape IS NULL OR marker_shape NOT IN ('circle','square','diamond','arrow','cross')"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE test_points SET marker_size = 16 "
+                "WHERE marker_size IS NULL OR marker_size < 8 OR marker_size > 40"
             )
         )

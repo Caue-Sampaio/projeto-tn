@@ -6,7 +6,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QLineEdit,
     QFormLayout, QTextEdit, QMessageBox, QGraphicsView, QGraphicsScene,
-    QGraphicsPixmapItem, QGraphicsEllipseItem, QGraphicsTextItem,
+    QGraphicsPixmapItem, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsTextItem,
     QComboBox, QSlider, QDialog, QDialogButtonBox, QSplitter, QFrame,
     QTabWidget, QMenu, QTableWidget, QTableWidgetItem, QHeaderView,
     QSpinBox, QInputDialog, QGraphicsDropShadowEffect, QGroupBox,
@@ -24,6 +24,7 @@ from PyQt6.QtCore import (
 from db.models import TestPoint, BoardUnit, Measurement, OscilloscopeCapture, OscilloscopeReference
 from sqlalchemy.orm import Session
 from ui.oscilloscope_panel import OscilloscopePanel
+from ui.marker_graphics import build_marker_path, normalize_marker_shape, normalize_marker_size, MarkerAppearanceDialog
 from oscilloscope.base import OscilloscopeReading
 import json
 import logging
@@ -120,48 +121,55 @@ class Theme:
 # ══════════════════════════════════════════════════════════════════
 # TEST POINT GRAPHICS ITEM
 # ══════════════════════════════════════════════════════════════════
-class TestPointItem(QGraphicsEllipseItem):
-    """Interactive graphics item representing a test point on the PCB canvas."""
+class TestPointItem(QGraphicsPathItem):
+    """Marcador interativo com formato e tamanho persistidos por ponto."""
 
     def __init__(self, tp: TestPoint, marker_widget):
-        base_size = 14
-        super().__init__(-base_size / 2, -base_size / 2, base_size, base_size)
+        super().__init__()
         self.tp = tp
         self.marker_widget = marker_widget
-        self.base_size = base_size
         self._selected = False
+        self._zoom_level = 1.0
 
-        # Cor persistida por ponto. Nunca gera cor aleatória/tipificada.
         color_hex = getattr(tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
         self._color = QColor(color_hex)
         self._color_hover = QColor(color_hex)
         self._color_hover.setAlpha(255)
         self._color_base = QColor(color_hex)
         self._color_base.setAlpha(200)
+        self.base_size = normalize_marker_size(getattr(tp, "marker_size", None))
+        self.marker_shape = normalize_marker_shape(getattr(tp, "marker_shape", None))
 
-        # Appearance
-        self.setBrush(QBrush(self._color_base))
-        pen = QPen(QColor(color_hex))
-        pen.setWidth(2)
-        self.setPen(pen)
-
-        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
 
-        # Label
         self.label = QGraphicsTextItem(tp.refdes, self)
         self.label.setDefaultTextColor(QColor(Theme.TEXT_PRIMARY))
         self.label.setFont(QFont("Consolas", 7, QFont.Weight.Bold))
-        self.update_label_position()
 
-        # Position
         self.setPos(tp.x, tp.y)
+        self.refresh_appearance()
+        self.update_tooltip()
 
+    def refresh_appearance(self):
+        self.base_size = normalize_marker_size(getattr(self.tp, "marker_size", None))
+        self.marker_shape = normalize_marker_shape(getattr(self.tp, "marker_shape", None))
+        color_hex = getattr(self.tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
+        self._color = QColor(color_hex)
+        self._color_hover = QColor(color_hex)
+        self._color_hover.setAlpha(255)
+        self._color_base = QColor(color_hex)
+        self._color_base.setAlpha(200)
+        self.update_size_based_on_zoom(self._zoom_level)
+        self.set_selected_style(self._selected)
         self.update_tooltip()
 
     def update_tooltip(self):
         tooltip_lines = [f"{self.tp.refdes}"]
+        tooltip_lines.append(
+            f"Marcador: {self.marker_shape} • {self.base_size}px"
+        )
         if self.tp.expected_voltage_v is not None:
             tooltip_lines.append(f"Esperado: {self.tp.expected_voltage_v:.4g} V")
         if getattr(self.tp, "last_scope_vpp_v", None) is not None:
@@ -184,45 +192,41 @@ class TestPointItem(QGraphicsEllipseItem):
 
     def update_label_position(self):
         text_rect = self.label.boundingRect()
-        self.label.setPos(-text_rect.width() / 2, -self.base_size - 10)
+        bounds = self.path().boundingRect()
+        self.label.setPos(-text_rect.width() / 2, bounds.top() - text_rect.height() - 4)
 
     def update_size_based_on_zoom(self, zoom_level):
-        new_size = max(6, self.base_size / zoom_level)
-        self.setRect(-new_size / 2, -new_size / 2, new_size, new_size)
-        font_size = max(5, int(7 / zoom_level))
+        self._zoom_level = max(0.05, float(zoom_level or 1.0))
+        new_size = max(5.0, self.base_size / self._zoom_level)
+        self.setPath(build_marker_path(self.marker_shape, new_size))
+        font_size = max(5, int(7 / self._zoom_level))
         self.label.setFont(QFont("Consolas", font_size, QFont.Weight.Bold))
         self.update_label_position()
 
     def set_selected_style(self, selected: bool):
-        self._selected = selected
+        self._selected = bool(selected)
         if selected:
-            glow = QColor(Theme.ACCENT_CYAN)
-            glow.setAlpha(120)
-            pen = QPen(QColor(Theme.ACCENT_CYAN))
-            pen.setWidth(3)
-            self.setPen(pen)
-            # Make the point brighter
+            self.setPen(QPen(QColor(Theme.ACCENT_CYAN), 3))
             bright = QColor(self._color.name())
             bright.setAlpha(255)
             self.setBrush(QBrush(bright))
         else:
-            pen = QPen(QColor(self._color.name()))
-            pen.setWidth(2)
-            self.setPen(pen)
+            self.setPen(QPen(QColor(self._color.name()), 2))
             self.setBrush(QBrush(self._color_base))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.marker_widget.select_point(self.tp)
         elif event.button() == Qt.MouseButton.RightButton:
-            screen_pos = event.screenPos()
-            self.marker_widget.show_point_context_menu(self.tp, screen_pos)
+            self.marker_widget.show_point_context_menu(self.tp, event.screenPos())
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        center = self.sceneBoundingRect().center()
-        self.tp.x = int(center.x())
-        self.tp.y = int(center.y())
+        # A posição do item é a coordenada real do ponto, independentemente do
+        # formato (inclusive seta, cujo desenho não é geometricamente simétrico).
+        p = self.pos()
+        self.tp.x = int(round(p.x()))
+        self.tp.y = int(round(p.y()))
         self.marker_widget.session.add(self.tp)
         self.marker_widget.session.commit()
         self.update_label_position()
@@ -231,17 +235,13 @@ class TestPointItem(QGraphicsEllipseItem):
 
     def hoverEnterEvent(self, event):
         if not self._selected:
-            pen = QPen(QColor(Theme.ACCENT_CYAN))
-            pen.setWidth(2)
-            self.setPen(pen)
+            self.setPen(QPen(QColor(Theme.ACCENT_CYAN), 2))
             self.setBrush(QBrush(self._color_hover))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
         if not self._selected:
-            pen = QPen(QColor(self._color.name()))
-            pen.setWidth(2)
-            self.setPen(pen)
+            self.setPen(QPen(QColor(self._color.name()), 2))
             self.setBrush(QBrush(self._color_base))
         super().hoverLeaveEvent(event)
 
@@ -848,6 +848,7 @@ class ImageMarker(QWidget):
         self.instruments = instruments or {}
         self.current_point = None
         self.image_path = None
+        self.current_image_slot = 1
         self.test_point_items = {}
         # Leituras ao vivo não são persistidas até o usuário capturar.
         # Elas servem apenas para a comparação instantânea na própria tela.
@@ -1791,9 +1792,27 @@ class ImageMarker(QWidget):
     # ──────────────────────────────────────────────────────────────
     # IMAGE LOADING
     # ──────────────────────────────────────────────────────────────
+    def _detect_image_slot(self, path: str) -> int:
+        """Descobre se o arquivo carregado é a Imagem 1 ou 2 da placa."""
+        try:
+            target = os.path.normcase(os.path.abspath(path))
+            images = sorted(list(self.board.images), key=lambda i: (i.created_at or datetime.min, i.id or 0))
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            for idx, image in enumerate(images[:2], start=1):
+                stored = image.path
+                candidate = stored if os.path.isabs(stored) else os.path.join(project_root, stored)
+                if os.path.normcase(os.path.abspath(candidate)) == target:
+                    return idx
+                if os.path.basename(candidate) == os.path.basename(path):
+                    return idx
+        except Exception:
+            pass
+        return 1
+
     def load_image(self, path: str):
         """Load a PCB image into the canvas viewer."""
         self.image_path = path
+        self.current_image_slot = self._detect_image_slot(path)
         success = self.view.load_image(path)
         if success:
             self.refresh_points()
@@ -2139,6 +2158,7 @@ class ImageMarker(QWidget):
                 self.view.scene().removeItem(item)
 
         points = self.session.query(TestPoint).filter_by(board_id=self.board.id).all()
+        points = [p for p in points if int(getattr(p, "image_slot", 1) or 1) == self.current_image_slot]
         self._reference_cache = {
             ref.refdes: ref
             for ref in self.session.query(OscilloscopeReference)
@@ -2416,7 +2436,9 @@ class ImageMarker(QWidget):
                 refdes=refdes,
                 x=x,
                 y=y,
+                image_slot=self.current_image_slot,
                 marker_color=Theme.DEFAULT_POINT_COLOR,
+                marker_shape="circle", marker_size=16,
             )
             self.session.add(tp)
             self.session.commit()
@@ -2509,6 +2531,29 @@ class ImageMarker(QWidget):
     # ──────────────────────────────────────────────────────────────
     # POINT COLOR + MULTIMETER MEASUREMENTS
     # ──────────────────────────────────────────────────────────────
+    def edit_marker_appearance(self, tp=None):
+        tp = tp or self.current_point
+        if tp is None:
+            self.show_status("Selecione um ponto para alterar o marcador", "warning")
+            return
+        dlg = MarkerAppearanceDialog(tp, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        shape, size = dlg.values()
+        try:
+            tp.marker_shape = shape
+            tp.marker_size = size
+            self.session.add(tp)
+            self.session.commit()
+            item = self.test_point_items.get(tp.id)
+            if item is not None:
+                item.refresh_appearance()
+            self.show_status(f"Marcador de {tp.refdes} atualizado", "success")
+        except Exception as exc:
+            self.session.rollback()
+            logger.exception("Erro ao salvar aparência do ponto")
+            self.show_status(f"Erro ao salvar marcador: {exc}", "error")
+
     def choose_point_color(self, tp=None):
         """Altera apenas a cor do ponto escolhido e persiste no SQLite."""
         tp = tp or self.current_point
@@ -2675,6 +2720,8 @@ class ImageMarker(QWidget):
         if self.mode == "edit":
             color_action = menu.addAction("Alterar cor…")
             color_action.triggered.connect(lambda: self.choose_point_color(tp))
+            appearance_action = menu.addAction("Formato e tamanho…")
+            appearance_action.triggered.connect(lambda: self.edit_marker_appearance(tp))
             reset_color_action = menu.addAction("Restaurar vermelho")
             reset_color_action.triggered.connect(lambda: self.reset_point_color(tp))
             menu.addSeparator()

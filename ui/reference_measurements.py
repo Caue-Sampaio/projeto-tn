@@ -9,12 +9,13 @@ from PyQt6.QtGui import QColor, QBrush, QPen, QPixmap, QFont, QDoubleValidator, 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QFrame, QSplitter, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsEllipseItem, QGraphicsTextItem, QTableWidget, QTableWidgetItem,
+    QGraphicsPathItem, QGraphicsTextItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QDialog, QDialogButtonBox, QFormLayout,
     QLineEdit, QTextEdit, QSlider, QInputDialog, QMenu, QColorDialog
 )
 
 from db.models import BoardUnit, TestPoint, OscilloscopeReference
+from ui.marker_graphics import build_marker_path, normalize_marker_shape, normalize_marker_size, MarkerAppearanceDialog
 from oscilloscope.base import OscilloscopeReading
 from ui.oscilloscope_panel import OscilloscopePanel
 
@@ -105,7 +106,7 @@ class ReferenceGraphicsView(QGraphicsView):
         super().mousePressEvent(event)
 
 
-class ReferencePointItem(QGraphicsEllipseItem):
+class ReferencePointItem(QGraphicsPathItem):
     """Ponto da placa na aba Referências.
 
     Usa o mesmo comportamento básico do mapeamento principal: selecionar,
@@ -113,21 +114,21 @@ class ReferencePointItem(QGraphicsEllipseItem):
     """
 
     def __init__(self, point: TestPoint, owner: "ReferenceMeasurements"):
-        super().__init__(-8, -8, 16, 16)
+        super().__init__()
         self.point = point
         self.owner = owner
         self.setPos(point.x, point.y)
         self._apply_color(getattr(point, "marker_color", None) or RefTheme.DEFAULT_POINT_COLOR)
         self.setZValue(20)
         self.setAcceptHoverEvents(True)
-        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         self.label = QGraphicsTextItem(point.refdes, self)
         self.label.setDefaultTextColor(QColor("#FFFFFF"))
         self.label.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        self.label.setPos(10, -16)
+        self.update_appearance()
         self._update_tooltip()
 
     def _apply_color(self, color_hex: str):
@@ -144,10 +145,19 @@ class ReferencePointItem(QGraphicsEllipseItem):
         )
         self._update_tooltip()
 
+    def update_appearance(self):
+        shape = normalize_marker_shape(getattr(self.point, "marker_shape", None))
+        size = normalize_marker_size(getattr(self.point, "marker_size", None))
+        self.setPath(build_marker_path(shape, size))
+        self.label.setPos(size / 2 + 3, -size / 2 - 8)
+        self._update_tooltip()
+
     def _update_tooltip(self):
         self.setToolTip(
             f"{self.point.refdes}\n"
             f"Posição: ({self.point.x}, {self.point.y})\n"
+            f"Marcador: {normalize_marker_shape(getattr(self.point, 'marker_shape', None))} • "
+            f"{normalize_marker_size(getattr(self.point, 'marker_size', None))} px\n"
             "Arraste para mover • botão direito para opções"
         )
 
@@ -185,8 +195,6 @@ class ReferencePointItem(QGraphicsEllipseItem):
         super().mouseDoubleClickEvent(event)
 
     def set_selected(self, selected: bool):
-        self.setRect(-11 if selected else -8, -11 if selected else -8,
-                     22 if selected else 16, 22 if selected else 16)
         if selected:
             self.setPen(QPen(QColor(RefTheme.ACCENT_CYAN), 2.5))
         else:
@@ -314,6 +322,7 @@ class ReferenceMeasurements(QWidget):
         self.current_user = current_user
         self.current_board: BoardUnit | None = None
         self.current_point: TestPoint | None = None
+        self.current_image_slot: int = 1
         self.point_items: dict[int, ReferencePointItem] = {}
         self._build_ui()
         self._apply_style()
@@ -403,6 +412,17 @@ class ReferenceMeasurements(QWidget):
         self.board_label = QLabel("Nenhuma placa selecionada")
         self.board_label.setObjectName("sectionTitle")
         bar.addWidget(self.board_label)
+
+        self.image1_btn = QPushButton("Img 1")
+        self.image2_btn = QPushButton("Img 2")
+        for _btn in (self.image1_btn, self.image2_btn):
+            _btn.setCheckable(True)
+            _btn.setFixedWidth(52)
+        self.image1_btn.setChecked(True)
+        self.image1_btn.clicked.connect(lambda: self.set_image_slot(1))
+        self.image2_btn.clicked.connect(lambda: self.set_image_slot(2))
+        bar.addWidget(self.image1_btn)
+        bar.addWidget(self.image2_btn)
         bar.addStretch()
 
         # Criação de ponto diretamente na aba de referência. O ponto é salvo
@@ -519,6 +539,18 @@ class ReferenceMeasurements(QWidget):
         if self.current_board is None:
             self._board_changed(None)
 
+    def open_for_board(self, board_id: int) -> bool:
+        """Abre a página de referências já contextualizada para uma placa.
+
+        Usado por PlacaDetalhes. É o equivalente ao contexto
+        ``/preferencias?placaId=<id>`` em uma aplicação desktop PyQt6.
+        """
+        board = self.session.get(BoardUnit, int(board_id))
+        if board is None:
+            return False
+        self._board_changed(board)
+        return True
+
     def select_board(self):
         """Abre exatamente o mesmo seletor Máquina -> Placa usado na aba Testes."""
         has_boards = self.session.query(BoardUnit).filter_by(is_active=True).first() is not None
@@ -558,6 +590,7 @@ class ReferenceMeasurements(QWidget):
         if hasattr(self, "add_point_btn") and self.add_point_btn.isChecked():
             self._end_point_placement()
         self.current_board = board
+        self.current_image_slot = 1
         self.current_point = None
         self.scope.set_selected_point(None)
         self.scope.clear_reference_waveform()
@@ -579,9 +612,10 @@ class ReferenceMeasurements(QWidget):
         self.board_label.setText(
             f"{self.current_board.name} — modelo {self.current_board.board_model.name if self.current_board.board_model else self.current_board.model}"
         )
-        images = sorted(self.current_board.images, key=lambda x: x.created_at or datetime.min, reverse=True)
-        if images:
-            path = images[0].path
+        images = sorted(self.current_board.images, key=lambda x: (x.created_at or datetime.min, x.id or 0))
+        image = images[self.current_image_slot - 1] if len(images) >= self.current_image_slot else None
+        if image:
+            path = image.path
             if not os.path.isabs(path):
                 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 candidate = os.path.join(project_root, path)
@@ -592,11 +626,25 @@ class ReferenceMeasurements(QWidget):
                 self.scene.addItem(QGraphicsPixmapItem(pix))
                 self.scene.setSceneRect(QRectF(pix.rect()))
 
-        for point in self.session.query(TestPoint).filter_by(board_id=self.current_board.id).all():
+        points = self.session.query(TestPoint).filter_by(board_id=self.current_board.id).all()
+        points = [p for p in points if int(getattr(p, "image_slot", 1) or 1) == self.current_image_slot]
+        for point in points:
             item = ReferencePointItem(point, self)
             self.scene.addItem(item)
             self.point_items[point.id] = item
         self.fit_image()
+
+    def set_image_slot(self, slot: int):
+        self.current_image_slot = 2 if int(slot) == 2 else 1
+        self.image1_btn.blockSignals(True); self.image2_btn.blockSignals(True)
+        self.image1_btn.setChecked(self.current_image_slot == 1)
+        self.image2_btn.setChecked(self.current_image_slot == 2)
+        self.image1_btn.blockSignals(False); self.image2_btn.blockSignals(False)
+        self.current_point = None
+        self.scope.set_selected_point(None)
+        self.scope.clear_reference_waveform()
+        self.selection_label.setText("Ponto: nenhum")
+        self._load_board_scene()
 
     def fit_image(self):
         if not self.scene.items():
@@ -670,7 +718,10 @@ class ReferenceMeasurements(QWidget):
                 refdes=refdes,
                 x=int(round(x)),
                 y=int(round(y)),
+                image_slot=self.current_image_slot,
                 marker_color=RefTheme.DEFAULT_POINT_COLOR,
+                marker_shape="circle",
+                marker_size=16,
             )
             self.session.add(point)
             self.session.commit()
@@ -746,6 +797,9 @@ class ReferenceMeasurements(QWidget):
                 self.select_point(point)
 
     def select_point(self, point: TestPoint):
+        slot = int(getattr(point, "image_slot", 1) or 1)
+        if slot != self.current_image_slot:
+            self.set_image_slot(slot)
         self.current_point = point
         for pid, item in self.point_items.items():
             item.set_selected(pid == point.id)
@@ -833,6 +887,29 @@ class ReferenceMeasurements(QWidget):
             self.session.rollback()
             QMessageBox.critical(self, "Erro", f"Não foi possível alterar a cor: {exc}")
 
+    def edit_marker_appearance(self, point: TestPoint | None = None):
+        point = point or self.current_point
+        if point is None:
+            return
+        self.select_point(point)
+        dlg = MarkerAppearanceDialog(point, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            shape, size = dlg.values()
+            point.marker_shape = shape
+            point.marker_size = size
+            self.session.add(point)
+            self.session.commit()
+            item = self.point_items.get(point.id)
+            if item is not None:
+                item.update_appearance()
+                item.set_selected(True)
+            self.status.setText(f"Marcador de {point.refdes}: {shape} • {size}px")
+        except Exception as exc:
+            self.session.rollback()
+            QMessageBox.critical(self, "Erro", f"Não foi possível alterar o marcador: {exc}")
+
     def delete_point(self, point: TestPoint | None = None):
         point = point or self.current_point
         if point is None:
@@ -915,6 +992,8 @@ class ReferenceMeasurements(QWidget):
         color.triggered.connect(lambda: self.choose_point_color(point))
         reset = menu.addAction("Restaurar vermelho")
         reset.triggered.connect(lambda: self.reset_point_color(point))
+        appearance = menu.addAction("Formato / tamanho do marcador…")
+        appearance.triggered.connect(lambda: self.edit_marker_appearance(point))
 
         menu.addSeparator()
         remove = menu.addAction(f"Excluir {point.refdes}")

@@ -64,8 +64,58 @@ class Machine(Base):
     # Sem cascade de exclusão: apagar a máquina NÃO apaga as placas (elas ficam "sem máquina")
     boards: Mapped[List["BoardUnit"]] = relationship("BoardUnit", back_populates="machine")
 
+    # Dossiê técnico da máquina. Documentos e falhas pertencem à máquina e são
+    # removidos do banco junto com ela (os arquivos físicos são mantidos).
+    documents: Mapped[List["MachineDocument"]] = relationship(
+        "MachineDocument", back_populates="machine", cascade="all, delete-orphan",
+        order_by="MachineDocument.created_at.desc()",
+    )
+    faults: Mapped[List["MachineFault"]] = relationship(
+        "MachineFault", back_populates="machine", cascade="all, delete-orphan",
+        order_by="MachineFault.occurrences.desc(), MachineFault.updated_at.desc()",
+    )
+
     def __repr__(self):
         return f"Machine(id={self.id}, name='{self.name}')"
+
+
+class MachineDocument(Base):
+    """Documento técnico persistido no dossiê de uma máquina."""
+    __tablename__ = "machine_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    file_path: Mapped[str] = mapped_column(String(700))
+    original_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    machine: Mapped["Machine"] = relationship("Machine", back_populates="documents")
+
+    def __repr__(self):
+        return f"MachineDocument(id={self.id}, machine={self.machine_id}, title='{self.title}')"
+
+
+class MachineFault(Base):
+    """Falha recorrente da máquina e procedimento técnico recomendado."""
+    __tablename__ = "machine_faults"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    symptom: Mapped[str] = mapped_column(Text)
+    probable_cause: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    solution: Mapped[str] = mapped_column(Text)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    occurrences: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    machine: Mapped["Machine"] = relationship("Machine", back_populates="faults")
+
+    def __repr__(self):
+        return f"MachineFault(id={self.id}, machine={self.machine_id}, title='{self.title}')"
 
 
 class BoardUnit(Base):
@@ -122,6 +172,11 @@ class TestPoint(Base):
     x: Mapped[int] = mapped_column(Integer)
     y: Mapped[int] = mapped_column(Integer)
 
+    # Slot da fotografia da placa em que o ponto está posicionado.
+    # 1 = Imagem 1 (padrão / compatibilidade com pontos antigos)
+    # 2 = Imagem 2
+    image_slot: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     expected_voltage_v: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     expected_current_a: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     expected_frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -131,8 +186,10 @@ class TestPoint(Base):
     tolerance_current_a: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     tolerance_frequency_hz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # Aparência do marcador no scanner. Novos pontos sempre nascem vermelhos.
+    # Aparência persistida do marcador. Cada ponto pode ter cor, formato e tamanho próprios.
     marker_color: Mapped[str] = mapped_column(String(7), default="#E53935", nullable=False)
+    marker_shape: Mapped[str] = mapped_column(String(20), default="circle", nullable=False)
+    marker_size: Mapped[int] = mapped_column(Integer, default=16, nullable=False)
 
     # Última captura do osciloscópio. Os valores esperados do ponto permanecem
     # separados das medições reais. O histórico completo fica em

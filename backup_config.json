@@ -6,10 +6,10 @@
   "backup_logs": true,
   "backup_images": false,
   "compression_level": 6,
-  "last_backup": "2026-10-07T19:54:19.957724",
+  "last_backup": "2026-10-07T20:03:37.181958",
   "backup_stats": {
-    "total_backups": 114,
-    "last_successful": "2026-10-07T19:54:19.957724",
-    "total_size_mb": 170.96
+    "total_backups": 115,
+    "last_successful": "2026-10-07T20:03:37.181958",
+    "total_size_mb": 172.56
   }
 }

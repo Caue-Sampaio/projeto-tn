@@ -573,6 +573,60 @@ class TestExecutor(QWidget):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
+        # ──────────────────────────────────────────────────────
+        # EXECUÇÃO NO TOPO
+        # Os controles do diagnóstico ficam sempre visíveis logo no início
+        # do painel. Nenhuma função foi alterada; apenas a posição no layout.
+        execution_box = QFrame()
+        execution_box.setObjectName("infoBox")
+        execution_layout = QVBoxLayout(execution_box)
+        execution_layout.setContentsMargins(10, 10, 10, 10)
+        execution_layout.setSpacing(6)
+
+        execution_caption = QLabel("EXECUÇÃO")
+        execution_caption.setObjectName("caption")
+        execution_layout.addWidget(execution_caption)
+
+        self.btn_start_test = QPushButton("▶  INICIAR DIAGNÓSTICO")
+        self.btn_start_test.setObjectName("primaryButton")
+        self.btn_start_test.setFixedHeight(42)
+        self.btn_start_test.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_start_test.setToolTip(
+            "Inicia o diagnóstico guiado na ordem definida pelo plano. Atalho: Espaço."
+        )
+        self.btn_start_test.clicked.connect(self.start_test)
+        execution_layout.addWidget(self.btn_start_test)
+
+        self.btn_capture_step = QPushButton("📥  CAPTURAR ETAPA")
+        self.btn_capture_step.setObjectName("primaryButton")
+        self.btn_capture_step.setFixedHeight(38)
+        self.btn_capture_step.setEnabled(False)
+        self.btn_capture_step.setToolTip(
+            "Captura Vpp, Vrms, frequência e forma de onda do ponto atual."
+        )
+        self.btn_capture_step.clicked.connect(self.capture_guided_step)
+        execution_layout.addWidget(self.btn_capture_step)
+
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(6)
+        self.btn_prev_step = QPushButton("← Anterior")
+        self.btn_prev_step.setObjectName("secondaryButton")
+        self.btn_prev_step.setFixedHeight(34)
+        self.btn_prev_step.setEnabled(False)
+        self.btn_prev_step.clicked.connect(self.previous_guided_step)
+
+        self.btn_skip_step = QPushButton("Pular")
+        self.btn_skip_step.setObjectName("secondaryButton")
+        self.btn_skip_step.setFixedHeight(34)
+        self.btn_skip_step.setEnabled(False)
+        self.btn_skip_step.clicked.connect(self.skip_guided_step)
+
+        nav_row.addWidget(self.btn_prev_step)
+        nav_row.addWidget(self.btn_skip_step)
+        execution_layout.addLayout(nav_row)
+
+        layout.addWidget(execution_box)
+
         # Placa
         board_box = QFrame()
         board_box.setObjectName("infoBox")
@@ -692,7 +746,7 @@ class TestExecutor(QWidget):
         layout.addWidget(guide_box)
 
         # Ação principal
-        exec_caption = QLabel("PREPARAÇÃO & EXECUÇÃO")
+        exec_caption = QLabel("PREPARAÇÃO")
         exec_caption.setObjectName("caption")
         layout.addWidget(exec_caption)
 
@@ -711,37 +765,6 @@ class TestExecutor(QWidget):
         self.btn_plan_editor.setToolTip("Edita somente o plano de teste selecionado.")
         self.btn_plan_editor.clicked.connect(self.open_plan_editor)
         layout.addWidget(self.btn_plan_editor)
-
-        self.btn_start_test = QPushButton("▶  INICIAR DIAGNÓSTICO")
-        self.btn_start_test.setObjectName("primaryButton")
-        self.btn_start_test.setFixedHeight(46)
-        self.btn_start_test.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.btn_start_test.setMinimumHeight(46)
-        self.btn_start_test.setToolTip("Inicia o diagnóstico guiado na ordem definida pelo plano. Atalho: Espaço.")
-        self.btn_start_test.clicked.connect(self.start_test)
-        layout.addWidget(self.btn_start_test)
-
-        self.btn_capture_step = QPushButton("📥  CAPTURAR ETAPA")
-        self.btn_capture_step.setObjectName("primaryButton")
-        self.btn_capture_step.setFixedHeight(42)
-        self.btn_capture_step.setEnabled(False)
-        self.btn_capture_step.setToolTip("Captura Vpp, Vrms, frequência e forma de onda do ponto atual.")
-        self.btn_capture_step.clicked.connect(self.capture_guided_step)
-        layout.addWidget(self.btn_capture_step)
-
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(6)
-        self.btn_prev_step = QPushButton("← Anterior")
-        self.btn_prev_step.setObjectName("secondaryButton")
-        self.btn_prev_step.setEnabled(False)
-        self.btn_prev_step.clicked.connect(self.previous_guided_step)
-        self.btn_skip_step = QPushButton("Pular")
-        self.btn_skip_step.setObjectName("secondaryButton")
-        self.btn_skip_step.setEnabled(False)
-        self.btn_skip_step.clicked.connect(self.skip_guided_step)
-        nav_row.addWidget(self.btn_prev_step)
-        nav_row.addWidget(self.btn_skip_step)
-        layout.addLayout(nav_row)
 
         self.btn_export_report = QPushButton("Exportar último relatório")
         self.btn_export_report.setObjectName("secondaryButton")

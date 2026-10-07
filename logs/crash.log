@@ -64,3 +64,33 @@ Traceback (most recent call last):
     board_name = self.plan.board.name if self.plan.board else "—"
                                          ^^^^^^^^^^^^^^^
 AttributeError: 'TestPlan' object has no attribute 'board'
+
+--- 2026-10-07 19:21:19
+Traceback (most recent call last):
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 698, in view_plan_details
+    dialog = PlanDetailsDialog(self.current_plan, self.session)
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 28, in __init__
+    self.setup_ui()
+    ~~~~~~~~~~~~~^^
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 39, in setup_ui
+    layout.addWidget(self.create_header())
+                     ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 66, in create_header
+    board_name = self.plan.board.name if self.plan.board else "—"
+                                         ^^^^^^^^^^^^^^^
+AttributeError: 'TestPlan' object has no attribute 'board'
+
+--- 2026-10-07 19:21:22
+Traceback (most recent call last):
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 698, in view_plan_details
+    dialog = PlanDetailsDialog(self.current_plan, self.session)
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 28, in __init__
+    self.setup_ui()
+    ~~~~~~~~~~~~~^^
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 39, in setup_ui
+    layout.addWidget(self.create_header())
+                     ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\plan_manager.py", line 66, in create_header
+    board_name = self.plan.board.name if self.plan.board else "—"
+                                         ^^^^^^^^^^^^^^^
+AttributeError: 'TestPlan' object has no attribute 'board'

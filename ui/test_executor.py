@@ -1,8 +1,9 @@
 from pathlib import Path
 from datetime import datetime
+import json
 import logging
 
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -30,13 +31,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from db.models import BoardUnit, Machine
+from db.models import BoardUnit, Machine, TestRun, Measurement, OscilloscopeReference
 from engine.pdf_report import export_test_report
 from engine.runner import run_test
+from engine.guided_diagnostic import (
+    compare_scope_reading, reference_summary, reading_summary,
+    serialize_guided_result, format_value,
+)
 from ui.plan_manager import PlanManager
 from utils.image_paths import resolve_image_path, heal_board_images, import_image_to_project
 from ui.image_marker import ImageMarker
 from ui.plan_editor import PlanEditor
+from ui.guided_scope_client import GuidedScopeClient
 
 
 logger = logging.getLogger(__name__)
@@ -404,6 +410,22 @@ class TestExecutor(QWidget):
         self.marker_widget = None
         self.is_test_running = False
 
+        # Diagnóstico guiado: o plano define a ordem; as referências definem
+        # os valores corretos; o Rigol fornece a medição real de cada etapa.
+        self.guided_steps = []
+        self.guided_index = -1
+        self.guided_measurements = {}
+        self.current_reference = None
+        self.guided_run = None
+        self._scope_connected = False
+        self._scope_simulated = False
+
+        self.scope_client = GuidedScopeClient(self)
+        self.scope_client.status_changed.connect(self._on_scope_status)
+        self.scope_client.snapshot_ready.connect(self._on_guided_snapshot)
+        self.scope_client.error.connect(self._on_scope_error)
+
+        # Mantidos por compatibilidade com execuções antigas do projeto.
         self.instruments = {
             "DMM": FakeDMM(),
             "OSC": FakeScope(),
@@ -616,6 +638,59 @@ class TestExecutor(QWidget):
         plan_layout.addWidget(self.btn_create_plan)
         layout.addWidget(plan_box)
 
+        # Osciloscópio compacto: no Teste Geral não mostramos a tela de onda.
+        # Ele trabalha em snapshots, um por etapa do plano.
+        scope_box = QFrame()
+        scope_box.setObjectName("infoBox")
+        scope_layout = QVBoxLayout(scope_box)
+        scope_layout.setContentsMargins(12, 10, 12, 10)
+        scope_layout.setSpacing(5)
+        scope_caption = QLabel("OSCILOSCÓPIO")
+        scope_caption.setObjectName("caption")
+        scope_head = QHBoxLayout()
+        self.scope_status_dot = QLabel("●")
+        self.scope_status_dot.setStyleSheet("color:#64748B;")
+        self.scope_status_text = QLabel("Desconectado")
+        self.scope_status_text.setObjectName("mutedText")
+        scope_head.addWidget(self.scope_status_dot)
+        scope_head.addWidget(self.scope_status_text)
+        scope_head.addStretch()
+        self.scope_resource_label = QLabel(self.scope_client.resource)
+        self.scope_resource_label.setObjectName("mutedText")
+        self.scope_resource_label.setWordWrap(True)
+        self.btn_scope_connect = QPushButton("Conectar Rigol")
+        self.btn_scope_connect.setObjectName("secondaryButton")
+        self.btn_scope_connect.setFixedHeight(36)
+        self.btn_scope_connect.clicked.connect(self._toggle_guided_scope)
+        scope_layout.addWidget(scope_caption)
+        scope_layout.addLayout(scope_head)
+        scope_layout.addWidget(self.scope_resource_label)
+        scope_layout.addWidget(self.btn_scope_connect)
+        layout.addWidget(scope_box)
+
+        # Cartão da etapa atual do roteiro.
+        guide_box = QFrame()
+        guide_box.setObjectName("infoBox")
+        guide_layout = QVBoxLayout(guide_box)
+        guide_layout.setContentsMargins(12, 10, 12, 10)
+        guide_layout.setSpacing(4)
+        guide_caption = QLabel("DIAGNÓSTICO GUIADO")
+        guide_caption.setObjectName("caption")
+        self.guide_step_label = QLabel("Aguardando início")
+        self.guide_step_label.setObjectName("infoValue")
+        self.guide_step_label.setWordWrap(True)
+        self.guide_instruction_label = QLabel("O plano define a ordem dos pontos.")
+        self.guide_instruction_label.setObjectName("mutedText")
+        self.guide_instruction_label.setWordWrap(True)
+        self.guide_reference_label = QLabel("Referência: —")
+        self.guide_reference_label.setObjectName("mutedText")
+        self.guide_reference_label.setWordWrap(True)
+        guide_layout.addWidget(guide_caption)
+        guide_layout.addWidget(self.guide_step_label)
+        guide_layout.addWidget(self.guide_instruction_label)
+        guide_layout.addWidget(self.guide_reference_label)
+        layout.addWidget(guide_box)
+
         # Ação principal
         exec_caption = QLabel("PREPARAÇÃO & EXECUÇÃO")
         exec_caption.setObjectName("caption")
@@ -637,14 +712,36 @@ class TestExecutor(QWidget):
         self.btn_plan_editor.clicked.connect(self.open_plan_editor)
         layout.addWidget(self.btn_plan_editor)
 
-        self.btn_start_test = QPushButton("▶  INICIAR TESTE")
+        self.btn_start_test = QPushButton("▶  INICIAR DIAGNÓSTICO")
         self.btn_start_test.setObjectName("primaryButton")
         self.btn_start_test.setFixedHeight(46)
         self.btn_start_test.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_start_test.setMinimumHeight(46)
-        self.btn_start_test.setToolTip("Inicia o plano de teste selecionado. Atalho: Espaço.")
+        self.btn_start_test.setToolTip("Inicia o diagnóstico guiado na ordem definida pelo plano. Atalho: Espaço.")
         self.btn_start_test.clicked.connect(self.start_test)
         layout.addWidget(self.btn_start_test)
+
+        self.btn_capture_step = QPushButton("📥  CAPTURAR ETAPA")
+        self.btn_capture_step.setObjectName("primaryButton")
+        self.btn_capture_step.setFixedHeight(42)
+        self.btn_capture_step.setEnabled(False)
+        self.btn_capture_step.setToolTip("Captura Vpp, Vrms, frequência e forma de onda do ponto atual.")
+        self.btn_capture_step.clicked.connect(self.capture_guided_step)
+        layout.addWidget(self.btn_capture_step)
+
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(6)
+        self.btn_prev_step = QPushButton("← Anterior")
+        self.btn_prev_step.setObjectName("secondaryButton")
+        self.btn_prev_step.setEnabled(False)
+        self.btn_prev_step.clicked.connect(self.previous_guided_step)
+        self.btn_skip_step = QPushButton("Pular")
+        self.btn_skip_step.setObjectName("secondaryButton")
+        self.btn_skip_step.setEnabled(False)
+        self.btn_skip_step.clicked.connect(self.skip_guided_step)
+        nav_row.addWidget(self.btn_prev_step)
+        nav_row.addWidget(self.btn_skip_step)
+        layout.addLayout(nav_row)
 
         self.btn_export_report = QPushButton("Exportar último relatório")
         self.btn_export_report.setObjectName("secondaryButton")
@@ -656,7 +753,7 @@ class TestExecutor(QWidget):
 
         layout.addStretch()
 
-        hint = QLabel("Espaço: iniciar teste  •  Ctrl+L: limpar log")
+        hint = QLabel("Espaço: iniciar diagnóstico  •  Ctrl+L: limpar log")
         hint.setObjectName("shortcutHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -1208,10 +1305,39 @@ class TestExecutor(QWidget):
             return f"{value * 1000:.3g} mV"
         return f"{value:.4g} {unit}".strip()
 
+    def _reference_for_point(self, point):
+        """Busca a referência correta do mesmo modelo + RefDes."""
+        if point is None or self.selected_board is None:
+            return None
+        try:
+            return (
+                self.session.query(OscilloscopeReference)
+                .filter_by(
+                    board_model_id=self.selected_board.model_id,
+                    refdes=point.refdes,
+                )
+                .first()
+            )
+        except Exception:
+            logger.exception("Falha ao buscar referência de %s", getattr(point, "refdes", "?"))
+            return None
+
     def _point_expected_basic(self, point):
-        """Retorna apenas a referência principal do ponto para a tela de teste."""
+        """Resumo enxuto usado no Teste Geral. Referências têm prioridade."""
         if point is None:
             return "—"
+        reference = self._reference_for_point(point)
+        if reference is not None:
+            # Na tabela básica mostramos apenas a primeira grandeza disponível;
+            # o cartão da etapa atual mostra o conjunto completo.
+            if getattr(reference, "vpp_v", None) is not None:
+                return f"Vpp {format_value(reference.vpp_v, 'V')}"
+            if getattr(reference, "vrms_v", None) is not None:
+                return f"Vrms {format_value(reference.vrms_v, 'V')}"
+            if getattr(reference, "frequency_hz", None) is not None:
+                return f"F {format_value(reference.frequency_hz, 'Hz')}"
+
+        # Fallback para projetos antigos que ainda usam valores no TestPoint.
         if getattr(point, "expected_voltage_v", None) is not None:
             return self._format_compact_value(point.expected_voltage_v, "V")
         if getattr(point, "expected_frequency_hz", None) is not None:
@@ -1219,9 +1345,7 @@ class TestExecutor(QWidget):
         if getattr(point, "expected_current_a", None) is not None:
             return self._format_compact_value(point.expected_current_a, "A")
         waveform = getattr(point, "expected_waveform", None)
-        if waveform:
-            return str(waveform)
-        return "—"
+        return str(waveform) if waveform else "—"
 
     def populate_board_points(self):
         """Mostra os pontos da placa mesmo antes de um plano ser selecionado."""
@@ -1330,14 +1454,10 @@ class TestExecutor(QWidget):
                 point_item.setData(Qt.ItemDataRole.UserRole, point.id)
             self.results_table.setItem(row, 0, point_item)
 
-            expected = "—"
-            if step.desired_value is not None:
-                expected = self._format_compact_value(step.desired_value, step.unit or "")
-            elif point is not None:
-                expected = self._point_expected_basic(point)
+            expected = self._point_expected_basic(point) if point is not None else "—"
             self.results_table.setItem(row, 1, QTableWidgetItem(expected))
             self.results_table.setItem(row, 2, QTableWidgetItem("—"))
-            self.results_table.setItem(row, 3, QTableWidgetItem("Pronto"))
+            self.results_table.setItem(row, 3, QTableWidgetItem("Pendente"))
 
         # No plano, mantém todos os pontos associados visíveis de uma vez.
         plan_points = [step.test_point for step in steps if step.test_point is not None]
@@ -1352,17 +1472,19 @@ class TestExecutor(QWidget):
         self.results_table.setCurrentCell(-1, -1)
 
     def update_button_state(self):
-        # Mantém os botões clicáveis fora da execução.
-        # select_plan(), start_test() e generate_report() já fazem
-        # suas próprias validações e mostram mensagens ao usuário.
         enabled = not self.is_test_running
         self.btn_select_board.setEnabled(enabled)
         self.btn_select_plan.setEnabled(enabled)
         self.btn_create_plan.setEnabled(enabled)
-        self.btn_start_test.setEnabled(enabled)
-        self.btn_export_report.setEnabled(enabled)
+        # Durante a execução o mesmo botão vira CANCELAR, portanto fica ativo.
+        self.btn_start_test.setEnabled(True)
+        self.btn_export_report.setEnabled(enabled and self.last_run is not None)
         self.btn_map_points.setEnabled(enabled)
         self.btn_plan_editor.setEnabled(enabled)
+        if hasattr(self, "btn_capture_step"):
+            self.btn_capture_step.setEnabled(self.is_test_running and self._scope_connected)
+            self.btn_prev_step.setEnabled(self.is_test_running and self.guided_index > 0)
+            self.btn_skip_step.setEnabled(self.is_test_running)
 
     def check_can_start(self):
         self.update_button_state()
@@ -1372,6 +1494,16 @@ class TestExecutor(QWidget):
     # ==========================================================
 
     def start_test(self):
+        """Inicia/cancela o diagnóstico guiado pelo plano.
+
+        O plano define a sequência. Os valores corretos vêm da aba Referências.
+        Cada clique em "Capturar etapa" pede um snapshot ao Rigol e salva o
+        resultado no TestRun atual.
+        """
+        if self.is_test_running:
+            self.cancel_guided_test()
+            return
+
         if not self.selected_board or not self.selected_plan:
             QMessageBox.warning(
                 self,
@@ -1380,77 +1512,371 @@ class TestExecutor(QWidget):
             )
             return
 
-        if not self.selected_plan.steps:
+        steps = sorted(self.selected_plan.steps, key=lambda step: step.order_index)
+        if not steps:
             QMessageBox.warning(self, "Plano vazio", "O plano selecionado não possui etapas de teste.")
             return
 
+        missing_points = [step for step in steps if step.test_point is None]
+        if missing_points:
+            QMessageBox.warning(
+                self,
+                "Plano incompleto",
+                "Existem etapas sem ponto associado. Edite o plano antes de iniciar.",
+            )
+            return
+
+        if not self._scope_connected:
+            reply = QMessageBox.question(
+                self,
+                "Conectar osciloscópio",
+                "O Rigol ainda não está conectado. Deseja conectar agora usando a configuração salva?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.scope_client.connect_scope()
+            else:
+                return
+
+        try:
+            run = TestRun(
+                board=self.selected_board,
+                operator=self.user,
+                plan=self.selected_plan,
+                start_time=datetime.now(),
+                status="running",
+            )
+            self.session.add(run)
+            self.session.flush()
+            self.session.commit()
+        except Exception as exc:
+            self.session.rollback()
+            QMessageBox.critical(self, "Erro", f"Não foi possível iniciar a execução:\n{exc}")
+            return
+
+        self.guided_run = run
+        self.last_run = None
+        self.guided_steps = steps
+        self.guided_measurements = {}
+        self.guided_index = 0
         self.is_test_running = True
+
+        # Prepara tabela e interface.
+        self.populate_plan_steps()
+        for row in range(self.results_table.rowCount()):
+            self.results_table.setItem(row, 2, QTableWidgetItem("—"))
+            self.results_table.setItem(row, 3, QTableWidgetItem("Pendente"))
+
         self.progress_bar.setValue(0)
         self.progress_value_label.setText("0%")
-        self.current_step_label.setText("Etapa: preparando execução")
-        self.results_summary.setText("Teste em execução")
-        self.board_preview.clear_test_point()
-        self.preview_point.setText("Ponto atual: —")
-        self.set_status("Executando", "running")
+        self.results_summary.setText("Diagnóstico guiado em andamento")
+        self.set_status("Diagnóstico", "running")
+        self.btn_start_test.setText("■  CANCELAR DIAGNÓSTICO")
         self._set_execution_controls(False)
 
         self.log("=" * 58)
-        self.log(f"▶ Iniciando teste: {self.selected_plan.name}")
-        self.log(
-            f"Placa: {self.selected_board.name} "
-            f"(SN: {self.selected_board.serial_number})"
-        )
+        self.log(f"▶ Diagnóstico guiado: {self.selected_plan.name}")
+        self.log(f"Placa: {self.selected_board.name} (SN: {self.selected_board.serial_number})")
+        self.log("O plano controla a ordem; as referências fornecem os valores corretos.")
         self.log("=" * 58)
-        QApplication.processEvents()
 
+        self._show_guided_step(0)
+
+    def _toggle_guided_scope(self):
+        if self._scope_connected or (self.scope_client.reader is not None and self.scope_client.reader.is_alive()):
+            self.scope_client.disconnect_scope()
+        else:
+            self.scope_client.connect_scope()
+
+    def _on_scope_status(self, text, connected, simulated):
+        self._scope_connected = bool(connected)
+        self._scope_simulated = bool(simulated)
+        if hasattr(self, "scope_status_text"):
+            self.scope_status_text.setText(text)
+            color = "#FACC15" if simulated and connected else ("#22C55E" if connected else "#64748B")
+            self.scope_status_dot.setStyleSheet(f"color:{color};")
+            self.btn_scope_connect.setText("Desconectar" if connected else "Conectar Rigol")
+        if hasattr(self, "btn_capture_step"):
+            self.btn_capture_step.setEnabled(self.is_test_running and connected)
+        if connected:
+            self.log(f"🔌 Osciloscópio {text.lower()}: {self.scope_client.resource}")
+
+    def _on_scope_error(self, message):
+        self.log(f"❌ Osciloscópio: {message}")
+        if hasattr(self, "scope_status_text"):
+            self.scope_status_text.setText("Erro de comunicação")
+        if self.is_test_running:
+            QMessageBox.warning(self, "Osciloscópio", str(message))
+
+    def _guided_reference(self, step):
+        return self._reference_for_point(step.test_point if step else None)
+
+    def _show_guided_step(self, index):
+        if not self.is_test_running or not self.guided_steps:
+            return
+        index = max(0, min(int(index), len(self.guided_steps) - 1))
+        self.guided_index = index
+        step = self.guided_steps[index]
+        point = step.test_point
+        reference = self._guided_reference(step)
+        self.current_reference = reference
+
+        channel = int(getattr(reference, "channel", 1) or 1) if reference is not None else 1
+        self.scope_client.set_channel(channel)
+
+        self.guide_step_label.setText(f"Etapa {index + 1}/{len(self.guided_steps)} • {point.refdes}")
+        self.guide_instruction_label.setText(step.description or "Meça o ponto destacado.")
+        if reference is None:
+            self.guide_reference_label.setText("Referência: não cadastrada")
+            self.guide_reference_label.setStyleSheet("color:#F59E0B;")
+        else:
+            self.guide_reference_label.setText(
+                f"CH{channel} • {reference_summary(reference)}"
+            )
+            self.guide_reference_label.setStyleSheet("")
+
+        self.current_step_label.setText(f"Etapa {index + 1}/{len(self.guided_steps)}: {point.refdes}")
+        self.highlight_test_point(step)
+        if index < self.results_table.rowCount():
+            self.results_table.selectRow(index)
+
+        self.btn_prev_step.setEnabled(index > 0)
+        self.btn_skip_step.setEnabled(True)
+        self.btn_capture_step.setEnabled(self._scope_connected)
+        self.btn_capture_step.setText("📥  CAPTURAR ETAPA")
+        self.log(f"[{index + 1}/{len(self.guided_steps)}] {point.refdes} — {step.description}")
+
+    def capture_guided_step(self):
+        if not self.is_test_running or not self.guided_steps:
+            return
+        if not self._scope_connected:
+            QMessageBox.warning(self, "Osciloscópio", "Conecte o Rigol antes de capturar.")
+            return
+        step = self.guided_steps[self.guided_index]
+        reference = self._guided_reference(step)
+        channel = int(getattr(reference, "channel", 1) or 1) if reference is not None else 1
+        self.scope_client.set_channel(channel)
+        context = {
+            "run_id": self.guided_run.id if self.guided_run else None,
+            "step_id": step.id,
+            "index": self.guided_index,
+        }
+        self.btn_capture_step.setEnabled(False)
+        self.btn_capture_step.setText("Capturando…")
+        self.guide_instruction_label.setText("Aguarde a leitura do Rigol…")
+        if not self.scope_client.capture(context):
+            self.btn_capture_step.setEnabled(True)
+            self.btn_capture_step.setText("📥  CAPTURAR ETAPA")
+
+    def _on_guided_snapshot(self, reading, context):
+        if not self.is_test_running or self.guided_run is None:
+            return
+        if not isinstance(context, dict):
+            return
+        step_id = context.get("step_id")
+        step = next((s for s in self.guided_steps if s.id == step_id), None)
+        if step is None:
+            return
+        reference = self._guided_reference(step)
+        result = compare_scope_reading(reference, reading)
+        self._save_guided_measurement(step, reading, result)
+        self._update_guided_row(step, result)
+
+        similarity = result.get("waveform_similarity_pct")
+        similarity_text = f" • onda {similarity:.1f}%" if similarity is not None else ""
+        self.log(
+            f"{step.test_point.refdes}: {result['measured_summary']} → "
+            f"{result['status']}{similarity_text}"
+        )
+
+        # Atualiza o progresso pelo número de etapas que já possuem resultado.
+        done = len(self.guided_measurements)
+        total = len(self.guided_steps)
+        progress = int(done / total * 100) if total else 0
+        self.progress_bar.setValue(progress)
+        self.progress_value_label.setText(f"{progress}%")
+
+        self.btn_capture_step.setText("📥  CAPTURAR ETAPA")
+
+        current_index = context.get("index", self.guided_index)
+        if current_index >= total - 1:
+            self._finish_guided_test()
+        else:
+            # Mostra imediatamente o próximo ponto. Como o cliente trabalha
+            # apenas por snapshots, nenhuma leitura é atribuída durante a troca
+            # física da ponta de prova.
+            QTimer.singleShot(450, lambda: self._show_guided_step(current_index + 1))
+
+    def _save_guided_measurement(self, step, reading, result):
+        measurement = self.guided_measurements.get(step.id)
+        if measurement is None:
+            measurement = Measurement(test_run=self.guided_run, step=step)
+            self.session.add(measurement)
+            self.guided_measurements[step.id] = measurement
+
+        measurement.value = result.get("primary_value")
+        measurement.unit = result.get("primary_unit") or ""
+        measurement.passed = result.get("passed")
+        measurement.notes = serialize_guided_result(
+            result, channel=getattr(reading, "channel", None)
+        )
+        measurement.timestamp = datetime.now()
+
+        expected = result.get("primary_expected")
+        tol_pct = result.get("primary_tolerance_pct")
+        if expected is not None and tol_pct is not None:
+            tol_abs = abs(float(expected)) * float(tol_pct) / 100.0
+            measurement.min_limit = float(expected) - tol_abs
+            measurement.max_limit = float(expected) + tol_abs
+        else:
+            measurement.min_limit = None
+            measurement.max_limit = None
+
+        self.session.commit()
+
+    def _row_for_step(self, step):
+        for row in range(self.results_table.rowCount()):
+            item = self.results_table.item(row, 0)
+            if item is None or step.test_point is None:
+                continue
+            if item.data(Qt.ItemDataRole.UserRole) == step.test_point.id:
+                # Em caso de ponto repetido no plano, usa a posição da etapa.
+                if row == self.guided_steps.index(step):
+                    return row
         try:
-            run, measurements = run_test(
-                session=self.session,
-                plan=self.selected_plan,
-                board=self.selected_board,
-                operator=self.user,
-                instruments=self.instruments,
-                highlight_callback=self.highlight_test_point,
-                progress_callback=self.update_progress,
-            )
-            self.last_run = run
-            self.display_test_results(run, measurements)
+            return self.guided_steps.index(step)
+        except ValueError:
+            return -1
 
-            reply = QMessageBox.question(
-                self,
-                "Relatório",
-                "Teste concluído. Deseja gerar o relatório em PDF?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                self.generate_report()
+    def _update_guided_row(self, step, result):
+        row = self._row_for_step(step)
+        if row < 0 or row >= self.results_table.rowCount():
+            return
+        metrics = result.get("metrics") or {}
+        primary = next(iter(metrics.values()), None)
+        expected_text = primary.get("expected_text") if primary else (result.get("expected_summary") or "—")
+        measured_text = primary.get("measured_text") if primary else (result.get("measured_summary") or "—")
+        self.results_table.setItem(row, 1, QTableWidgetItem(expected_text or "—"))
+        self.results_table.setItem(row, 2, QTableWidgetItem(measured_text or "—"))
+        status = result.get("status") or "—"
+        status_item = QTableWidgetItem(status)
+        color = {
+            "OK": "#22C55E",
+            "LIMITE": "#FACC15",
+            "FALHA": "#EF4444",
+            "SEM REF.": "#F59E0B",
+            "SEM LEITURA": "#EF4444",
+            "PULADO": "#94A3B8",
+        }.get(status, "#CBD5E1")
+        status_item.setForeground(QColor(color))
+        self.results_table.setItem(row, 3, status_item)
 
-        except Exception as exc:
-            self.session.rollback()
-            self.log(f"❌ ERRO DURANTE O TESTE: {exc}")
-            logger.exception("Erro durante execução do teste")
-            self.set_status("Erro", "error")
-            self.results_summary.setText("Falha durante execução")
-            QMessageBox.critical(
-                self,
-                "Erro durante o teste",
-                f"Ocorreu um erro durante o teste:\n{exc}",
-            )
-        finally:
-            self.is_test_running = False
-            self._set_execution_controls(True)
-            self.update_button_state()
-            self.current_step_label.setText("Etapa: finalizada")
+    def previous_guided_step(self):
+        if not self.is_test_running or self.guided_index <= 0:
+            return
+        self._show_guided_step(self.guided_index - 1)
+
+    def skip_guided_step(self):
+        if not self.is_test_running or not self.guided_steps:
+            return
+        step = self.guided_steps[self.guided_index]
+        result = {
+            "status": "PULADO",
+            "passed": None,
+            "expected_summary": reference_summary(self._guided_reference(step)),
+            "measured_summary": "—",
+            "metrics": {},
+            "waveform_similarity_pct": None,
+            "primary_value": None,
+            "primary_expected": None,
+            "primary_tolerance_pct": None,
+            "primary_unit": "",
+        }
+        self._save_guided_measurement(step, None, result)
+        self._update_guided_row(step, result)
+        self.log(f"⚪ {step.test_point.refdes}: etapa pulada")
+        if self.guided_index >= len(self.guided_steps) - 1:
+            self._finish_guided_test()
+        else:
+            self._show_guided_step(self.guided_index + 1)
+
+    def _finish_guided_test(self):
+        if not self.is_test_running or self.guided_run is None:
+            return
+        measurements = list(self.guided_measurements.values())
+        has_failure = any(m.passed is False for m in measurements)
+        self.guided_run.status = "failed" if has_failure else "completed"
+        self.guided_run.end_time = datetime.now()
+        self.session.commit()
+        self.last_run = self.guided_run
+
+        self.is_test_running = False
+        self.guided_index = -1
+        self.btn_start_test.setText("▶  INICIAR DIAGNÓSTICO")
+        self.btn_capture_step.setEnabled(False)
+        self.btn_prev_step.setEnabled(False)
+        self.btn_skip_step.setEnabled(False)
+        self._set_execution_controls(True)
+        self.progress_bar.setValue(100)
+        self.progress_value_label.setText("100%")
+        self.current_step_label.setText("Etapa: diagnóstico finalizado")
+        self.guide_step_label.setText("Diagnóstico concluído")
+        self.guide_instruction_label.setText("Revise os resultados e exporte o relatório.")
+
+        ok = sum(1 for m in measurements if m.passed is True)
+        fail = sum(1 for m in measurements if m.passed is False)
+        skipped = sum(1 for m in measurements if m.passed is None)
+        self.results_summary.setText(f"{ok} OK • {fail} falha(s) • {skipped} sem resultado")
+        self.set_status("Reprovada" if has_failure else "Aprovada", "error" if has_failure else "success")
+        self.log(f"■ Diagnóstico finalizado: {self.guided_run.status}")
+
+        reply = QMessageBox.question(
+            self,
+            "Diagnóstico concluído",
+            "Diagnóstico concluído. Deseja gerar o relatório em PDF agora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.generate_report()
+
+    def cancel_guided_test(self):
+        if not self.is_test_running:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Cancelar diagnóstico",
+            "Deseja cancelar o diagnóstico em andamento?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if self.guided_run is not None:
+            self.guided_run.status = "cancelled"
+            self.guided_run.end_time = datetime.now()
+            self.session.commit()
+            self.last_run = self.guided_run
+        self.is_test_running = False
+        self.guided_index = -1
+        self.btn_start_test.setText("▶  INICIAR DIAGNÓSTICO")
+        self.btn_capture_step.setEnabled(False)
+        self.btn_prev_step.setEnabled(False)
+        self.btn_skip_step.setEnabled(False)
+        self._set_execution_controls(True)
+        self.set_status("Cancelado", "warning")
+        self.guide_step_label.setText("Diagnóstico cancelado")
+        self.guide_instruction_label.setText("Selecione Iniciar diagnóstico para recomeçar.")
 
     def _set_execution_controls(self, enabled):
-        # Durante um teste, bloqueia ações que poderiam mudar o contexto.
-        # Fora da execução, todos voltam a responder ao clique.
+        # Placa/plano ficam congelados durante o roteiro, mas o botão principal
+        # permanece ativo para permitir CANCELAR.
         self.btn_select_board.setEnabled(enabled)
         self.btn_select_plan.setEnabled(enabled)
         self.btn_create_plan.setEnabled(enabled)
-        self.btn_start_test.setEnabled(enabled)
-        self.btn_export_report.setEnabled(enabled)
+        self.btn_start_test.setEnabled(True)
+        self.btn_export_report.setEnabled(enabled and self.last_run is not None)
         self.btn_map_points.setEnabled(enabled)
         self.btn_plan_editor.setEnabled(enabled)
 
@@ -1791,3 +2217,10 @@ class TestExecutor(QWidget):
         if plan is None:
             return
         self.set_selected_plan(plan)
+    def closeEvent(self, event):
+        try:
+            self.scope_client.shutdown()
+        except Exception:
+            pass
+        super().closeEvent(event)
+

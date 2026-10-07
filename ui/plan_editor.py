@@ -9,36 +9,36 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer  # Adicionei QTimer aqui
 from PyQt6.QtGui import QIcon, QFont
-from db.models import TestStep, TestPoint, TestPlan
+from db.models import TestStep, TestPoint, TestPlan, OscilloscopeReference
 from engine.logger import log_user_action
 import logging
 
 logger = logging.getLogger(__name__)
 
 class StepForm(QDialog):
-    """Formulário para adicionar/editar uma etapa ao plano"""
-    
+    """Etapa do roteiro: ponto + ordem + instrução.
+
+    Os valores corretos não pertencem ao plano. Eles são lidos da aba
+    Referências para evitar cadastro duplicado.
+    """
+
     def __init__(self, session, board, step=None):
         super().__init__()
         self.session = session
         self.board = board
-        self.step = step  # Se for edição
+        self.step = step
         self.is_edit = step is not None
-        
-        self.setWindowTitle("Editar Etapa de Teste" if self.is_edit else "Nova Etapa de Teste")
-        self.setMinimumWidth(500)
-        
+        self.setWindowTitle("Editar etapa" if self.is_edit else "Nova etapa")
+        self.setMinimumWidth(560)
         self.setup_ui()
         self.apply_styles()
-        
         if self.is_edit:
             self.load_step_data()
-            
-    def setup_ui(self):
-        """Monta o formulário de etapa com a mesma linguagem visual do dashboard."""
-        self.setObjectName("stepDialog")
-        self.setMinimumWidth(560)
+        else:
+            self._update_reference_info()
 
+    def setup_ui(self):
+        self.setObjectName("stepDialog")
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -48,11 +48,10 @@ class StepForm(QDialog):
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(22, 16, 22, 16)
         header_layout.setSpacing(3)
-
-        title = QLabel("Editar etapa" if self.is_edit else "Nova etapa")
+        title = QLabel("Editar etapa do diagnóstico" if self.is_edit else "Nova etapa do diagnóstico")
         title.setObjectName("stepTitle")
         subtitle = QLabel(
-            "Defina o ponto, o valor esperado e a tolerância desta medição."
+            "O plano define somente a ordem e a instrução. Os valores corretos e tolerâncias vêm de Referências."
         )
         subtitle.setObjectName("stepSubtitle")
         subtitle.setWordWrap(True)
@@ -72,77 +71,42 @@ class StepForm(QDialog):
         form_layout.setContentsMargins(18, 18, 18, 18)
         form_layout.setHorizontalSpacing(14)
         form_layout.setVerticalSpacing(12)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self.description_input = QLineEdit()
-        self.description_input.setPlaceholderText("Ex: Tensão de alimentação")
-        self.description_input.setToolTip("Descrição clara e objetiva da etapa de teste")
-        self.set_field_style(self.description_input)
-        form_layout.addRow("Descrição *", self.description_input)
+        self.point_select = QComboBox()
+        points = (
+            self.session.query(TestPoint)
+            .filter_by(board_id=self.board.id)
+            .order_by(TestPoint.refdes)
+            .all()
+        )
+        self.point_select.addItem("Selecione o ponto...", None)
+        for point in points:
+            self.point_select.addItem(f"{point.refdes}  •  X:{point.x}  Y:{point.y}", point)
+        self.point_select.currentIndexChanged.connect(self._update_reference_info)
+        form_layout.addRow("Ponto *", self.point_select)
 
-        measurement_row = QHBoxLayout()
-        measurement_row.setSpacing(10)
-        self.unit_select = QComboBox()
-        self.unit_select.addItems(["V", "A", "Ω", "Hz", "°C", "%", "dB", "s", "W"])
-        self.unit_select.setEditable(True)
-        self.unit_select.setToolTip("Unidade de medida")
-        self.unit_select.setMinimumWidth(110)
+        self.reference_label = QLabel("Referência: —")
+        self.reference_label.setObjectName("referenceInfo")
+        self.reference_label.setWordWrap(True)
+        form_layout.addRow("Valores corretos", self.reference_label)
 
         self.order_spinbox = QSpinBox()
         self.order_spinbox.setRange(1, 1000)
         self.order_spinbox.setValue(1)
-        self.order_spinbox.setToolTip("Ordem de execução da etapa")
         self.order_spinbox.setMinimumWidth(90)
+        form_layout.addRow("Ordem", self.order_spinbox)
 
-        measurement_row.addWidget(QLabel("Unidade"))
-        measurement_row.addWidget(self.unit_select)
-        measurement_row.addSpacing(10)
-        measurement_row.addWidget(QLabel("Ordem"))
-        measurement_row.addWidget(self.order_spinbox)
-        measurement_row.addStretch()
-        form_layout.addRow("Medição", measurement_row)
-
-        values_row = QHBoxLayout()
-        values_row.setSpacing(10)
-        self.desired_input = QLineEdit()
-        self.desired_input.setPlaceholderText("Ex: 3.3")
-        self.desired_input.setToolTip("Valor esperado para a medição")
-        validator = QtGui.QDoubleValidator()
-        validator.setBottom(0)
-        self.desired_input.setValidator(validator)
-        self.set_field_style(self.desired_input)
-
-        self.tolerance_input = QLineEdit()
-        self.tolerance_input.setPlaceholderText("Ex: 0.1")
-        self.tolerance_input.setToolTip("Margem de tolerância aceitável (±)")
-        self.tolerance_input.setValidator(validator)
-        self.set_field_style(self.tolerance_input)
-
-        values_row.addWidget(QLabel("Desejado"))
-        values_row.addWidget(self.desired_input, 1)
-        values_row.addWidget(QLabel("Tolerância ±"))
-        values_row.addWidget(self.tolerance_input, 1)
-        form_layout.addRow("Valores", values_row)
-
-        self.point_select = QComboBox()
-        points = self.session.query(TestPoint).filter_by(board_id=self.board.id).all()
-        self.points = points
-        self.point_select.addItem("Nenhum ponto associado", None)
-        for point in points:
-            self.point_select.addItem(
-                f"{point.refdes}  •  X:{point.x}  Y:{point.y}", point
-            )
-        self.point_select.setToolTip("Ponto físico da placa associado à etapa")
-        form_layout.addRow("Ponto de teste", self.point_select)
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("Ex: Verificar PWM do gate")
+        self.set_field_style(self.description_input)
+        form_layout.addRow("Instrução *", self.description_input)
 
         self.notes_input = QTextEdit()
-        self.notes_input.setPlaceholderText("Observações adicionais sobre esta etapa...")
-        self.notes_input.setMaximumHeight(88)
-        self.notes_input.setToolTip("Informações complementares sobre a etapa")
+        self.notes_input.setPlaceholderText("Ex: usar ponta x10, medir em relação ao GND... (opcional)")
+        self.notes_input.setMaximumHeight(90)
         form_layout.addRow("Observações", self.notes_input)
 
         body_layout.addWidget(form_card)
-
         self.validation_label = QLabel("")
         self.validation_label.setObjectName("validationText")
         self.validation_label.setWordWrap(True)
@@ -154,7 +118,6 @@ class StepForm(QDialog):
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(22, 12, 22, 16)
         footer_layout.addStretch()
-
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -169,149 +132,112 @@ class StepForm(QDialog):
         footer_layout.addWidget(self.buttons)
         root.addWidget(footer)
 
+    def _reference_for_point(self, point):
+        if point is None:
+            return None
+        return (
+            self.session.query(OscilloscopeReference)
+            .filter_by(board_model_id=self.board.model_id, refdes=point.refdes)
+            .first()
+        )
+
+    @staticmethod
+    def _fmt(value, unit):
+        if value is None:
+            return None
+        value = float(value)
+        if unit == "Hz":
+            if abs(value) >= 1_000_000:
+                return f"{value/1_000_000:.3g} MHz"
+            if abs(value) >= 1_000:
+                return f"{value/1_000:.3g} kHz"
+        return f"{value:.4g} {unit}".strip()
+
+    def _update_reference_info(self, *_args):
+        point = self.point_select.currentData()
+        reference = self._reference_for_point(point)
+        if reference is None:
+            self.reference_label.setText("Sem referência cadastrada para este ponto")
+            self.reference_label.setStyleSheet("color:#D97706;font-weight:600;")
+            return
+        parts = []
+        if reference.vpp_v is not None:
+            parts.append(f"Vpp {self._fmt(reference.vpp_v, 'V')}")
+        if reference.vrms_v is not None:
+            parts.append(f"Vrms {self._fmt(reference.vrms_v, 'V')}")
+        if reference.frequency_hz is not None:
+            parts.append(f"F {self._fmt(reference.frequency_hz, 'Hz')}")
+        parts.append(f"CH{reference.channel or 1}")
+        self.reference_label.setText(" • ".join(parts))
+        self.reference_label.setStyleSheet("color:#0F766E;font-weight:600;")
+
     def apply_styles(self):
-        """Aplica a paleta já usada no programa, sem introduzir novas cores."""
         self.setStyleSheet("""
             QDialog#stepDialog { background-color: #F4F7F9; color: #0F172A; }
             QFrame#stepHeader { background-color: #0F172A; }
-            QLabel#stepTitle {
-                color: #FFFFFF; font-size: 18px; font-weight: 700; background: transparent;
-            }
-            QLabel#stepSubtitle {
-                color: #CBD5E1; font-size: 11px; background: transparent;
-            }
-            QWidget#stepBody { background-color: #F4F7F9; }
-            QFrame#formCard {
-                background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px;
-            }
-            QFrame#stepFooter {
-                background-color: #FFFFFF; border-top: 1px solid #E2E8F0;
-            }
-            QLabel { color: #334155; font-size: 12px; }
-            QLabel#validationText { color: #DC2626; font-size: 11px; font-weight: 600; }
+            QLabel#stepTitle { color:#FFFFFF; font-size:18px; font-weight:700; }
+            QLabel#stepSubtitle { color:#CBD5E1; font-size:11px; }
+            QWidget#stepBody { background-color:#F4F7F9; }
+            QFrame#formCard { background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; }
+            QFrame#stepFooter { background:#FFFFFF; border-top:1px solid #E2E8F0; }
+            QLabel { color:#334155; font-size:12px; }
+            QLabel#validationText { color:#DC2626; font-size:11px; font-weight:600; }
+            QLabel#referenceInfo { padding:7px 4px; }
             QLineEdit, QComboBox, QSpinBox, QTextEdit {
-                background-color: #FFFFFF; color: #0F172A;
-                border: 1px solid #CBD5E1; border-radius: 8px;
-                padding: 7px 10px; font-size: 13px;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
+                background:#FFFFFF; color:#0F172A; border:1px solid #CBD5E1;
+                border-radius:8px; padding:7px 10px; font-size:13px;
             }
-            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTextEdit:focus {
-                border: 1px solid #0284C7;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #FFFFFF; color: #0F172A;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
-            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTextEdit:focus { border:1px solid #0284C7; }
+            QComboBox QAbstractItemView { background:#FFFFFF; color:#0F172A; selection-background-color:#0284C7; }
             QPushButton#primaryDialogButton {
-                background-color: #0F766E; color: #FFFFFF;
-                border: 1px solid #0D9488; border-radius: 8px;
-                padding: 8px 16px; font-weight: 700; min-width: 120px;
+                background:#0F766E; color:#FFFFFF; border:1px solid #0D9488;
+                border-radius:8px; padding:8px 16px; font-weight:700; min-width:120px;
             }
-            QPushButton#primaryDialogButton:hover { background-color: #0D9488; }
+            QPushButton#primaryDialogButton:hover { background:#0D9488; }
             QPushButton#secondaryDialogButton {
-                background-color: #F1F5F9; color: #334155;
-                border: 1px solid #CBD5E1; border-radius: 8px;
-                padding: 8px 16px; font-weight: 600; min-width: 90px;
+                background:#F1F5F9; color:#334155; border:1px solid #CBD5E1;
+                border-radius:8px; padding:8px 16px; font-weight:600; min-width:90px;
             }
-            QPushButton#secondaryDialogButton:hover { background-color: #E2E8F0; }
         """)
 
     def set_field_style(self, field):
-        """Mantido por compatibilidade; o estilo agora é centralizado no diálogo."""
         if isinstance(field, QLineEdit):
             field.setProperty("error", "false")
 
     def load_step_data(self):
-        """Carrega dados da etapa para edição"""
         if not self.step:
             return
-            
         self.description_input.setText(self.step.description or "")
-        self.unit_select.setCurrentText(self.step.unit or "V")
         self.order_spinbox.setValue(self.step.order_index or 1)
-        self.desired_input.setText(str(self.step.desired_value) if self.step.desired_value else "")
-        self.tolerance_input.setText(str(self.step.tolerance) if self.step.tolerance else "")
         self.notes_input.setPlainText(self.step.notes or "")
-        
-        # Seleciona ponto de teste
         if self.step.test_point:
             for i in range(self.point_select.count()):
-                if self.point_select.itemData(i) == self.step.test_point:
+                point = self.point_select.itemData(i)
+                if point is not None and point.id == self.step.test_point.id:
                     self.point_select.setCurrentIndex(i)
                     break
-                    
+        self._update_reference_info()
+
     def validate_and_accept(self):
-        """Valida os dados antes de aceitar"""
-        errors = self.validate_form()
-        
-        if errors:
-            self.validation_label.setText("❌ " + " | ".join(errors))
-            return
-            
-        self.accept()
-        
-    def validate_form(self):
-        """Valida os dados do formulário"""
         errors = []
-        
-        # Descrição obrigatória
+        if self.point_select.currentData() is None:
+            errors.append("Selecione o ponto de teste")
         if not self.description_input.text().strip():
-            errors.append("Informe a descrição da etapa")
-            self.mark_field_error(self.description_input)
-        else:
-            self.clear_field_error(self.description_input)
-            
-        # Valida valores numéricos
-        desired_text = self.desired_input.text().strip()
-        tolerance_text = self.tolerance_input.text().strip()
-        
-        if desired_text:
-            try:
-                float(desired_text)
-                self.clear_field_error(self.desired_input)
-            except ValueError:
-                errors.append("Valor desejado deve ser um número")
-                self.mark_field_error(self.desired_input)
-                
-        if tolerance_text:
-            try:
-                tolerance = float(tolerance_text)
-                if tolerance < 0:
-                    errors.append("Tolerância não pode ser negativa")
-                    self.mark_field_error(self.tolerance_input)
-                else:
-                    self.clear_field_error(self.tolerance_input)
-            except ValueError:
-                errors.append("Tolerância deve ser um número")
-                self.mark_field_error(self.tolerance_input)
-                
-        return errors
-        
-    def mark_field_error(self, field):
-        """Marca campo com erro"""
-        field.setProperty("error", "true")
-        field.style().unpolish(field)
-        field.style().polish(field)
-        
-    def clear_field_error(self, field):
-        """Remove marcação de erro do campo"""
-        field.setProperty("error", "false")
-        field.style().unpolish(field)
-        field.style().polish(field)
-        
+            errors.append("Informe a instrução da etapa")
+        if errors:
+            self.validation_label.setText(" | ".join(errors))
+            return
+        self.accept()
+
     def get_step_data(self):
-        """Retorna os dados do formulário"""
-        selected_index = self.point_select.currentIndex()
-        point = self.point_select.itemData(selected_index) if selected_index >= 0 else None
-        
         return {
-            'description': self.description_input.text().strip(),
-            'unit': self.unit_select.currentText().strip(),
-            'order_index': self.order_spinbox.value(),
-            'desired_value': float(self.desired_input.text()) if self.desired_input.text().strip() else None,
-            'tolerance': float(self.tolerance_input.text()) if self.tolerance_input.text().strip() else None,
-            'test_point': point,
-            'notes': self.notes_input.toPlainText().strip() or None
+            "description": self.description_input.text().strip(),
+            "unit": "SCOPE",
+            "order_index": self.order_spinbox.value(),
+            "desired_value": None,
+            "tolerance": None,
+            "test_point": self.point_select.currentData(),
+            "notes": self.notes_input.toPlainText().strip() or None,
         }
 
 
@@ -415,7 +341,7 @@ class PlanEditor(QWidget):
         heading_box.setSpacing(1)
         heading = QLabel("Sequência de testes")
         heading.setObjectName("sectionTitle")
-        hint = QLabel("Adicione e edite somente as etapas necessárias para este plano.")
+        hint = QLabel("Defina a ordem dos pontos. Os valores corretos vêm automaticamente de Referências.")
         hint.setObjectName("sectionHint")
         heading_box.addWidget(heading)
         heading_box.addWidget(hint)
@@ -449,17 +375,15 @@ class PlanEditor(QWidget):
 
         self.step_table = QTableWidget()
         self.step_table.setObjectName("stepTable")
-        self.step_table.setColumnCount(6)
+        self.step_table.setColumnCount(4)
         self.step_table.setHorizontalHeaderLabels([
-            "Ordem", "Descrição", "Unidade", "Desejado", "Tolerância", "Ponto"
+            "Ordem", "Ponto", "Instrução", "Referência"
         ])
         header = self.step_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.step_table.verticalHeader().setVisible(False)
         self.step_table.setAlternatingRowColors(True)
         self.step_table.setShowGrid(False)
@@ -706,18 +630,30 @@ class PlanEditor(QWidget):
         self.step_table.setRowCount(len(steps))
         
         for row, step in enumerate(steps):
+            point = step.test_point
             self.step_table.setItem(row, 0, QTableWidgetItem(str(step.order_index)))
-            self.step_table.setItem(row, 1, QTableWidgetItem(step.description or ""))
-            self.step_table.setItem(row, 2, QTableWidgetItem(step.unit or ""))
-            self.step_table.setItem(row, 3, QTableWidgetItem(
-                f"{step.desired_value:.3f}" if step.desired_value else "-"
-            ))
-            self.step_table.setItem(row, 4, QTableWidgetItem(
-                f"±{step.tolerance:.3f}" if step.tolerance else "-"
-            ))
-            self.step_table.setItem(row, 5, QTableWidgetItem(
-                step.test_point.refdes if step.test_point else "-"
-            ))
+            self.step_table.setItem(row, 1, QTableWidgetItem(point.refdes if point else "—"))
+            self.step_table.setItem(row, 2, QTableWidgetItem(step.description or ""))
+
+            reference_text = "Sem referência"
+            if point is not None:
+                reference = (
+                    self.session.query(OscilloscopeReference)
+                    .filter_by(board_model_id=self.board.model_id, refdes=point.refdes)
+                    .first()
+                )
+                if reference is not None:
+                    parts = []
+                    if reference.vpp_v is not None:
+                        parts.append(f"Vpp {reference.vpp_v:.3g} V")
+                    if reference.vrms_v is not None:
+                        parts.append(f"Vrms {reference.vrms_v:.3g} V")
+                    if reference.frequency_hz is not None:
+                        f = reference.frequency_hz
+                        parts.append(f"F {f/1000:.3g} kHz" if abs(f) >= 1000 else f"F {f:.3g} Hz")
+                    parts.append(f"CH{reference.channel or 1}")
+                    reference_text = " • ".join(parts)
+            self.step_table.setItem(row, 3, QTableWidgetItem(reference_text))
             
         self.stats_label.setText(f"Total de etapas: {len(steps)}")
         

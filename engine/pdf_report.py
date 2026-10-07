@@ -9,6 +9,7 @@ from reportlab.platypus.flowables import Image
 import os
 from datetime import datetime
 from db.models import TestRun, Measurement
+from engine.guided_diagnostic import parse_guided_notes
 import logging
 from typing import Optional
 
@@ -198,104 +199,125 @@ class PDFReportGenerator:
         return elements
     
     def _build_results_table(self, test_run: TestRun):
-        """Constrói tabela de resultados"""
+        """Constrói tabela de resultados, incluindo o diagnóstico guiado."""
         elements = []
-        
         section_header = Paragraph("RESULTADOS DAS MEDIÇÕES", self.styles['SectionHeader'])
         elements.append(section_header)
-        
-        # Cabeçalho da tabela
-        header = [
-            "Etapa",
-            "Ponto",
-            "Unidade", 
-            "Desejado",
-            "Tolerância",
-            "Medido",
-            "Status"
-        ]
-        
-        data = [header]
-        
-        # Dados das medições
-        for measurement in test_run.measurements:
-            step = measurement.step
-            point_ref = step.test_point.refdes if step.test_point else "N/A"
-            
-            desired_str = f"{step.desired_value:.3f}" if step.desired_value else "-"
-            tolerance_str = f"±{step.tolerance:.3f}" if step.tolerance else "-"
-            measured_str = f"{measurement.value:.3f}" if measurement.value is not None else "N/A"
-            
-            # Status com cores
-            if measurement.passed is True:
-                status = "✅ APROVADO"
-            elif measurement.passed is False:
-                status = "❌ REPROVADO"
-            else:
-                status = "⚪ N/A"
-            
-            row = [
-                step.description[:30] + "..." if len(step.description) > 30 else step.description,
-                point_ref,
-                step.unit or "-",
-                desired_str,
-                tolerance_str,
-                measured_str,
-                status
-            ]
-            data.append(row)
-        
-        # Estilo da tabela
+
+        guided = any(parse_guided_notes(m.notes) for m in test_run.measurements)
+        if guided:
+            header = ["Etapa", "Ponto", "Referência", "Medido", "Desvio", "Onda", "Status"]
+            data = [header]
+            for measurement in test_run.measurements:
+                step = measurement.step
+                point_ref = step.test_point.refdes if step.test_point else "N/A"
+                info = parse_guided_notes(measurement.notes)
+                if info:
+                    expected = str(info.get("expected_summary") or "—")
+                    measured = str(info.get("measured_summary") or "—")
+                    deviations = []
+                    for metric in (info.get("metrics") or {}).values():
+                        pct = metric.get("deviation_pct")
+                        if pct is not None:
+                            deviations.append(f"{metric.get('label','')}: {pct:+.1f}%")
+                    deviation_text = " | ".join(deviations) if deviations else "—"
+                    sim = info.get("waveform_similarity_pct")
+                    wave_text = f"{sim:.1f}%" if isinstance(sim, (int, float)) else "—"
+                    status = str(info.get("status") or "—")
+                else:
+                    expected = f"{step.desired_value:.3f}" if step.desired_value is not None else "—"
+                    measured = f"{measurement.value:.3f}" if measurement.value is not None else "—"
+                    deviation_text = "—"
+                    wave_text = "—"
+                    status = "OK" if measurement.passed is True else ("FALHA" if measurement.passed is False else "N/A")
+                data.append([
+                    str(step.order_index),
+                    point_ref,
+                    expected,
+                    measured,
+                    deviation_text,
+                    wave_text,
+                    status,
+                ])
+
+            col_widths = [0.45*inch, 0.7*inch, 1.55*inch, 1.55*inch, 1.15*inch, 0.6*inch, 0.75*inch]
+        else:
+            header = ["Etapa", "Ponto", "Unidade", "Desejado", "Tolerância", "Medido", "Status"]
+            data = [header]
+            for measurement in test_run.measurements:
+                step = measurement.step
+                point_ref = step.test_point.refdes if step.test_point else "N/A"
+                desired_str = f"{step.desired_value:.3f}" if step.desired_value is not None else "-"
+                tolerance_str = f"±{step.tolerance:.3f}" if step.tolerance is not None else "-"
+                measured_str = f"{measurement.value:.3f}" if measurement.value is not None else "N/A"
+                status = "APROVADO" if measurement.passed is True else ("REPROVADO" if measurement.passed is False else "N/A")
+                data.append([
+                    step.description[:30] + "..." if len(step.description) > 30 else step.description,
+                    point_ref,
+                    step.unit or "-",
+                    desired_str,
+                    tolerance_str,
+                    measured_str,
+                    status,
+                ])
+            col_widths = [1.8*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.8*inch, 0.8*inch, 1*inch]
+
         table_style = TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495E')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
             ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8F9FA')),
             ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
             ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('FONTSIZE', (0, 1), (-1, -1), 7),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3F4')]),
         ])
-        
-        # Ajusta larguras das colunas
-        col_widths = [1.8*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.8*inch, 0.8*inch, 1*inch]
-        
         table = Table(data, colWidths=col_widths, repeatRows=1)
         table.setStyle(table_style)
         elements.append(table)
         elements.append(Spacer(1, 0.2*inch))
-        
         return elements
-    
+
     def _build_statistics(self, test_run: TestRun):
-        """Constrói seção de estatísticas"""
         elements = []
-        
-        section_header = Paragraph("ESTATÍSTICAS DO TESTE", self.styles['SectionHeader'])
-        elements.append(section_header)
-        
-        # Calcula estatísticas
-        total_measurements = len(test_run.measurements)
-        passed_measurements = sum(1 for m in test_run.measurements if m.passed is True)
-        failed_measurements = sum(1 for m in test_run.measurements if m.passed is False)
-        skipped_measurements = sum(1 for m in test_run.measurements if m.passed is None)
-        
-        success_rate = (passed_measurements / total_measurements * 100) if total_measurements > 0 else 0
-        
-        stats_data = [
-            ["Total de Medições:", str(total_measurements)],
-            ["Medições Aprovadas:", f"{passed_measurements} ({success_rate:.1f}%)"],
-            ["Medições Reprovadas:", str(failed_measurements)],
-            ["Medições Puladas/Não Realizadas:", str(skipped_measurements)],
-            ["Resultado Final:", self._get_final_verdict(test_run)]
-        ]
-        
+        elements.append(Paragraph("ESTATÍSTICAS DO TESTE", self.styles['SectionHeader']))
+
+        guided_infos = [parse_guided_notes(m.notes) for m in test_run.measurements]
+        guided_infos = [x for x in guided_infos if x]
+        if guided_infos:
+            total = len(test_run.measurements)
+            ok = sum(1 for x in guided_infos if x.get("status") == "OK")
+            limit = sum(1 for x in guided_infos if x.get("status") == "LIMITE")
+            fail = sum(1 for x in guided_infos if x.get("status") == "FALHA")
+            unresolved = total - ok - limit - fail
+            stats_data = [
+                ["Total de etapas:", str(total)],
+                ["Dentro da referência:", str(ok)],
+                ["Próximo do limite:", str(limit)],
+                ["Fora da tolerância:", str(fail)],
+                ["Sem resultado / puladas:", str(unresolved)],
+                ["Resultado final:", "REPROVADA" if fail else "APROVADA"],
+            ]
+        else:
+            total = len(test_run.measurements)
+            passed = sum(1 for m in test_run.measurements if m.passed is True)
+            failed = sum(1 for m in test_run.measurements if m.passed is False)
+            skipped = sum(1 for m in test_run.measurements if m.passed is None)
+            success_rate = (passed / total * 100) if total else 0
+            stats_data = [
+                ["Total de Medições:", str(total)],
+                ["Medições Aprovadas:", f"{passed} ({success_rate:.1f}%)"],
+                ["Medições Reprovadas:", str(failed)],
+                ["Medições Puladas/Não Realizadas:", str(skipped)],
+                ["Resultado Final:", self._get_final_verdict(test_run)],
+            ]
+
         table_style = TableStyle([
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#E8F6F3')),
             ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#27AE60')),
@@ -307,14 +329,12 @@ class PDFReportGenerator:
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
             ('TOPPADDING', (0, 0), (-1, -1), 6),
         ])
-        
         table = Table(stats_data, colWidths=[2.5*inch, 3*inch])
         table.setStyle(table_style)
         elements.append(table)
         elements.append(Spacer(1, 0.2*inch))
-        
         return elements
-    
+
     def _build_image_section(self, image_path: str):
         """Constrói seção da imagem da placa"""
         elements = []

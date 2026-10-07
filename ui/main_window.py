@@ -1,5 +1,7 @@
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QTimer, QVariantAnimation, QEasingCurve, QSize
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -19,35 +21,62 @@ from .reference_measurements import ReferenceMeasurements
 
 
 class SidebarButton(QPushButton):
-    def __init__(self, text, icon=""):
-        super().__init__(f"{icon} {text}")
+    """Botão de navegação que suporta os modos expandido e compacto."""
 
+    def __init__(self, text, icon=""):
+        super().__init__()
+        self.label_text = text
+        self.icon_text = icon
         self.setCheckable(True)
-        self.setMinimumHeight(45)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(46)
+        self.set_compact(False)
+
+    def set_compact(self, compact: bool):
+        if compact:
+            self.setText(self.icon_text)
+            self.setToolTip(self.label_text)
+            align = "center"
+            padding = "0"
+            margin = "3px 10px"
+        else:
+            self.setText(f"{self.icon_text}   {self.label_text}")
+            self.setToolTip("")
+            align = "left"
+            padding = "0 14px"
+            margin = "3px 12px"
 
         self.setStyleSheet(
-            """
-            QPushButton {
-                text-align: left;
-                padding-left: 15px;
-                background-color: transparent;
-                color: #ECF0F1;
-                border: none;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
-                margin: 2px 10px;
-            }
-
-            QPushButton:hover {
-                background-color: #34495E;
-            }
-
-            QPushButton:checked {
-                background-color: #0F766E;
-                color: white;
-            }
+            f"""
+            QPushButton {{
+                text-align: {align};
+                padding: {padding};
+                margin: {margin};
+                background: transparent;
+                color: #A9B7CA;
+                border: 1px solid transparent;
+                border-left: 3px solid transparent;
+                border-radius: 7px;
+                font-family: 'Segoe UI';
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: #151F31;
+                color: #F8FAFC;
+                border-color: #26364D;
+                border-left-color: #38526F;
+            }}
+            QPushButton:checked {{
+                background: #113331;
+                color: #F8FAFC;
+                border-color: #164E4A;
+                border-left-color: #2DD4BF;
+                font-weight: 700;
+            }}
+            QPushButton:pressed {{
+                background: #0D2A29;
+            }}
             """
         )
 
@@ -77,43 +106,142 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(0)
 
     def setup_sidebar(self):
-        self.sidebar = QFrame()
-        self.sidebar.setFixedWidth(250)
+        self.sidebar_expanded_width = 258
+        self.sidebar_collapsed_width = 76
+        self.sidebar_collapsed = False
 
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(self.sidebar_expanded_width)
         self.sidebar.setStyleSheet(
             """
-            QFrame {
-                background-color: #0F172A;
-                border-right: 1px solid #134E4A;
+            QFrame#sidebar {
+                background: #0B1220;
+                border-right: 1px solid #1E293B;
+            }
+            QFrame#sidebarHeader {
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #172033;
+            }
+            QFrame#userCard {
+                background: #0F1929;
+                border: 1px solid #1E2B40;
+                border-radius: 9px;
+            }
+            QLabel#brandTitle {
+                color: #F8FAFC;
+                font: 700 14px 'Segoe UI';
+            }
+            QLabel#brandSubtitle {
+                color: #2DD4BF;
+                font: 700 9px 'Segoe UI';
+                letter-spacing: 1px;
+            }
+            QLabel#navSection {
+                color: #5F7189;
+                font: 700 9px 'Segoe UI';
+                letter-spacing: 1px;
+                padding-left: 14px;
+            }
+            QLabel#avatarLabel {
+                color: #5EEAD4;
+                background: #123C3A;
+                border: 1px solid #17645F;
+                border-radius: 16px;
+                font: 700 10px 'Segoe UI';
+            }
+            QLabel#userName {
+                color: #E5EDF7;
+                font: 600 11px 'Segoe UI';
+            }
+            QLabel#userRole {
+                color: #71839A;
+                font: 9px 'Segoe UI';
+            }
+            QPushButton#sidebarToggle {
+                background: #101B2C;
+                color: #94A3B8;
+                border: 1px solid #233249;
+                border-radius: 7px;
+                font: 700 15px 'Segoe UI';
+            }
+            QPushButton#sidebarToggle:hover {
+                color: #5EEAD4;
+                border-color: #2A6F69;
+                background: #13283A;
+            }
+            QPushButton#sidebarToggle:pressed {
+                background: #0F2531;
+                border-color: #2DD4BF;
             }
             """
         )
 
         self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(0, 20, 0, 20)
-        self.sidebar_layout.setSpacing(5)
+        self.sidebar_layout.setContentsMargins(0, 0, 0, 12)
+        self.sidebar_layout.setSpacing(4)
 
-        title = QLabel("TN ELETROSISTEM")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        title.setStyleSheet(
-            "color: #2DD4BF; padding: 0 15px;"
+        # ── Cabeçalho da sidebar ───────────────────────────────────────
+        self.sidebar_header = QFrame()
+        self.sidebar_header.setObjectName("sidebarHeader")
+        self.sidebar_header.setFixedHeight(82)
+        header_layout = QHBoxLayout(self.sidebar_header)
+        header_layout.setContentsMargins(16, 12, 12, 12)
+        header_layout.setSpacing(8)
+
+        self.brand_box = QWidget()
+        brand_layout = QVBoxLayout(self.brand_box)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(1)
+
+        self.brand_title = QLabel("TN ELETROSISTEM")
+        self.brand_title.setObjectName("brandTitle")
+        self.brand_subtitle = QLabel("TESTFLOW / LAB")
+        self.brand_subtitle.setObjectName("brandSubtitle")
+        brand_layout.addWidget(self.brand_title)
+        brand_layout.addWidget(self.brand_subtitle)
+
+        header_layout.addWidget(self.brand_box, 1)
+
+        self.sidebar_toggle = QPushButton("")
+        self.sidebar_toggle.setObjectName("sidebarToggle")
+        self.sidebar_toggle.setFixedSize(32, 32)
+        self.sidebar_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sidebar_toggle.setToolTip("Recolher menu")
+
+        # Ícone oficial do botão retrátil da sidebar. Ele fica visível tanto
+        # com a barra aberta quanto com a barra recolhida.
+        project_root = Path(__file__).resolve().parent.parent
+        sidebar_icon_path = project_root / "emblema_futurista_tn_em_circuito_neon.ico"
+        self.sidebar_logo_icon = (
+            QIcon(str(sidebar_icon_path)) if sidebar_icon_path.exists() else QIcon()
         )
-        self.sidebar_layout.addWidget(title)
 
-        subtitle = QLabel("TEST SYSTEM")
-        subtitle.setFont(QFont("Arial", 10))
-        subtitle.setStyleSheet(
-            "color: #CBD5E1; "
-            "padding: 0 15px; "
-            "margin-bottom: 20px;"
-        )
-        self.sidebar_layout.addWidget(subtitle)
+        # O botão usa sempre o logo. O tamanho do ícone muda conforme o estado
+        # da sidebar, mas a identidade visual permanece a mesma.
+        if not self.sidebar_logo_icon.isNull():
+            self.sidebar_toggle.setText("")
+            self.sidebar_toggle.setIcon(self.sidebar_logo_icon)
+            self.sidebar_toggle.setIconSize(QSize(25, 25))
 
-        self.btn_dashboard = SidebarButton("Dashboard", "📊")
-        self.btn_placas = SidebarButton("Placas", "🔌")
-        self.btn_testes = SidebarButton("Testes", "🧪")
-        self.btn_referencias = SidebarButton("Referências", "📐")
-        self.btn_logout = SidebarButton("Sair", "🚪")
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        header_layout.addWidget(self.sidebar_toggle, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.sidebar_layout.addWidget(self.sidebar_header)
+
+        self.nav_section = QLabel("NAVEGAÇÃO")
+        self.nav_section.setObjectName("navSection")
+        self.nav_section.setFixedHeight(30)
+        self.nav_section.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.sidebar_layout.addWidget(self.nav_section)
+
+        # Ícones em caracteres simples para manter aparência estável no Windows.
+        self.btn_dashboard = SidebarButton("Dashboard", "▦")
+        self.btn_placas = SidebarButton("Placas", "▣")
+        self.btn_testes = SidebarButton("Testes", "▶")
+        self.btn_referencias = SidebarButton("Referências", "◇")
+        self.btn_logout = SidebarButton("Sair", "↪")
 
         self.buttons = [
             self.btn_dashboard,
@@ -122,72 +250,119 @@ class MainWindow(QMainWindow):
             self.btn_referencias,
         ]
 
-        self.btn_dashboard.clicked.connect(
-            lambda: self.switch_tab(
-                0,
-                self.btn_dashboard,
+        self.btn_dashboard.clicked.connect(lambda: self.switch_tab(0, self.btn_dashboard))
+        self.btn_placas.clicked.connect(lambda: self.switch_tab(1, self.btn_placas))
+        self.btn_testes.clicked.connect(lambda: self.switch_tab(2, self.btn_testes))
+        self.btn_referencias.clicked.connect(lambda: self.switch_tab(3, self.btn_referencias))
+        self.btn_logout.clicked.connect(self.close)
+
+        self.sidebar_layout.addWidget(self.btn_dashboard)
+        self.sidebar_layout.addWidget(self.btn_placas)
+        self.sidebar_layout.addWidget(self.btn_testes)
+        self.sidebar_layout.addWidget(self.btn_referencias)
+        self.sidebar_layout.addStretch(1)
+
+        # ── Usuário ────────────────────────────────────────────────────
+        self.user_card = QFrame()
+        self.user_card.setObjectName("userCard")
+        user_layout = QHBoxLayout(self.user_card)
+        user_layout.setContentsMargins(10, 9, 10, 9)
+        user_layout.setSpacing(9)
+
+        username = str(getattr(self.current_user, "username", "Usuário") or "Usuário")
+        role = str(getattr(self.current_user, "role", "Operador") or "Operador")
+        initials = "".join(part[:1].upper() for part in username.split()[:2]) or "U"
+
+        self.user_avatar = QLabel(initials[:2])
+        self.user_avatar.setObjectName("avatarLabel")
+        self.user_avatar.setFixedSize(34, 34)
+        self.user_avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        user_layout.addWidget(self.user_avatar)
+
+        self.user_text_box = QWidget()
+        user_text_layout = QVBoxLayout(self.user_text_box)
+        user_text_layout.setContentsMargins(0, 0, 0, 0)
+        user_text_layout.setSpacing(0)
+        self.user_name_label = QLabel(username)
+        self.user_name_label.setObjectName("userName")
+        self.user_role_label = QLabel(role)
+        self.user_role_label.setObjectName("userRole")
+        user_text_layout.addWidget(self.user_name_label)
+        user_text_layout.addWidget(self.user_role_label)
+        user_layout.addWidget(self.user_text_box, 1)
+
+        self.sidebar_layout.addWidget(self.user_card)
+        self.sidebar_layout.addWidget(self.btn_logout)
+
+        # Animação curta apenas para largura; não interfere no conteúdo central.
+        self.sidebar_animation = QVariantAnimation(self)
+        self.sidebar_animation.setDuration(170)
+        self.sidebar_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.sidebar_animation.valueChanged.connect(
+            lambda value: self.sidebar.setFixedWidth(int(value))
+        )
+
+        self.main_layout.addWidget(self.sidebar)
+
+    def toggle_sidebar(self):
+        """Recolhe/expande a navegação mantendo a aba ativa."""
+        start_width = self.sidebar.width()
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        end_width = (
+            self.sidebar_collapsed_width
+            if self.sidebar_collapsed
+            else self.sidebar_expanded_width
+        )
+
+        # Atualiza o conteúdo antes da animação para não haver quebra de texto.
+        self._apply_sidebar_state()
+
+        self.sidebar_animation.stop()
+        self.sidebar_animation.setStartValue(start_width)
+        self.sidebar_animation.setEndValue(end_width)
+        self.sidebar_animation.start()
+
+    def _apply_sidebar_state(self):
+        compact = self.sidebar_collapsed
+
+        self.brand_box.setVisible(not compact)
+        self.nav_section.setVisible(not compact)
+        self.user_text_box.setVisible(not compact)
+
+        # O logo fica no botão nos dois estados. Recolhida, ele cresce um pouco
+        # e passa a funcionar como o principal elemento visual para reabrir a barra.
+        self.sidebar_toggle.setText("")
+        if not self.sidebar_logo_icon.isNull():
+            self.sidebar_toggle.setIcon(self.sidebar_logo_icon)
+
+        if compact:
+            self.sidebar_toggle.setIconSize(QSize(36, 36))
+            self.sidebar_toggle.setFixedSize(48, 48)
+            self.sidebar_toggle.setToolTip("Expandir menu")
+        else:
+            self.sidebar_toggle.setIconSize(QSize(25, 25))
+            self.sidebar_toggle.setFixedSize(34, 34)
+            self.sidebar_toggle.setToolTip("Recolher menu")
+
+        # Mantém o botão sempre visível e perfeitamente centralizado quando compacto.
+        header_layout = self.sidebar_header.layout()
+        if compact:
+            header_layout.setContentsMargins(16, 10, 16, 10)
+        else:
+            header_layout.setContentsMargins(16, 12, 12, 12)
+
+        for btn in [*self.buttons, self.btn_logout]:
+            btn.set_compact(compact)
+
+        if compact:
+            self.user_card.setToolTip(
+                f"{getattr(self.current_user, 'username', 'Usuário')} • "
+                f"{getattr(self.current_user, 'role', 'Operador')}"
             )
-        )
-
-        self.btn_placas.clicked.connect(
-            lambda: self.switch_tab(
-                1,
-                self.btn_placas,
-            )
-        )
-
-        self.btn_testes.clicked.connect(
-            lambda: self.switch_tab(
-                2,
-                self.btn_testes,
-            )
-        )
-
-        self.btn_referencias.clicked.connect(
-            lambda: self.switch_tab(
-                3,
-                self.btn_referencias,
-            )
-        )
-
-        self.btn_logout.clicked.connect(
-            self.close
-        )
-
-        self.sidebar_layout.addWidget(
-            self.btn_dashboard
-        )
-        self.sidebar_layout.addWidget(
-            self.btn_placas
-        )
-        self.sidebar_layout.addWidget(
-            self.btn_testes
-        )
-        self.sidebar_layout.addWidget(
-            self.btn_referencias
-        )
-
-        self.sidebar_layout.addStretch()
-
-        user_info = QLabel(
-            f"👤 {self.current_user.username}\n"
-            f"🛡️ {self.current_user.role}"
-        )
-
-        user_info.setStyleSheet(
-            "color: #94A3B8; "
-            "padding: 15px; "
-            "font-size: 12px;"
-        )
-
-        self.sidebar_layout.addWidget(user_info)
-        self.sidebar_layout.addWidget(
-            self.btn_logout
-        )
-
-        self.main_layout.addWidget(
-            self.sidebar
-        )
+            self.user_card.layout().setContentsMargins(10, 9, 10, 9)
+        else:
+            self.user_card.setToolTip("")
+            self.user_card.layout().setContentsMargins(10, 9, 10, 9)
 
     def setup_content_area(self):
         self.content_area = QWidget()

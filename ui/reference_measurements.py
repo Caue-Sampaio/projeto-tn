@@ -320,17 +320,22 @@ class ReferenceMeasurements(QWidget):
         self.refresh_boards()
 
     def _build_ui(self):
+        # A página usa toda a área disponível. O fundo do widget raiz é preto
+        # para que qualquer pequeno espaço entre os blocos nunca apareça branco.
+        self.setObjectName("referencePage")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 10, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(4)
 
         # Cabeçalho compacto: mantém o contexto sem consumir área útil.
         header = QFrame()
         header.setObjectName("header")
-        header.setFixedHeight(46)
+        header.setFixedHeight(44)
         h = QHBoxLayout(header)
-        h.setContentsMargins(14, 0, 14, 0)
-        h.setSpacing(12)
+        h.setContentsMargins(12, 0, 12, 0)
+        h.setSpacing(10)
 
         title = QLabel("MEDIÇÕES DE REFERÊNCIA")
         title.setObjectName("pageTitle")
@@ -353,8 +358,8 @@ class ReferenceMeasurements(QWidget):
         board_select_card = QFrame()
         board_select_card.setObjectName("boardSelectCard")
         board_select_layout = QHBoxLayout(board_select_card)
-        board_select_layout.setContentsMargins(14, 10, 14, 10)
-        board_select_layout.setSpacing(12)
+        board_select_layout.setContentsMargins(12, 7, 12, 7)
+        board_select_layout.setSpacing(10)
 
         board_info = QVBoxLayout()
         board_info.setSpacing(2)
@@ -383,14 +388,16 @@ class ReferenceMeasurements(QWidget):
         root.addWidget(board_select_card)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("mainReferenceSplitter")
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(4)
 
         # LEFT 50%: imagem + pontos
         left = QFrame()
         left.setObjectName("panel")
         lv = QVBoxLayout(left)
-        lv.setContentsMargins(10, 10, 10, 10)
-        lv.setSpacing(8)
+        lv.setContentsMargins(8, 8, 8, 8)
+        lv.setSpacing(6)
         bar = QHBoxLayout()
         bar.setSpacing(7)
         self.board_label = QLabel("Nenhuma placa selecionada")
@@ -442,8 +449,8 @@ class ReferenceMeasurements(QWidget):
         right = QFrame()
         right.setObjectName("panel")
         rv = QVBoxLayout(right)
-        rv.setContentsMargins(10, 10, 10, 10)
-        rv.setSpacing(8)
+        rv.setContentsMargins(8, 8, 8, 8)
+        rv.setSpacing(6)
 
         self.scope = OscilloscopePanel(RefTheme, self)
         self.scope.capture_requested.connect(self._save_capture_as_reference)
@@ -1062,6 +1069,10 @@ class ReferenceMeasurements(QWidget):
         t = RefTheme
         self.setStyleSheet(f"""
             /* Fundo preto real da página de referência */
+            QWidget#referencePage {{
+                background:#000000;
+                border:none;
+            }}
             QWidget {{
                 color:{t.TEXT_PRIMARY};
                 font-family:'Segoe UI', Arial;
@@ -1152,7 +1163,9 @@ class ReferenceMeasurements(QWidget):
                 font-weight:700;
             }}
 
-            QSplitter::handle {{ background:#182130; width:2px; }}
+            QSplitter#mainReferenceSplitter {{ background:#000000; border:none; }}
+            QSplitter#mainReferenceSplitter::handle {{ background:#111827; width:4px; }}
+            QSplitter::handle {{ background:#111827; width:4px; }}
             QScrollBar:vertical {{ background:#05070A; width:10px; margin:0; }}
             QScrollBar::handle:vertical {{ background:#263244; min-height:28px; border-radius:5px; }}
             QScrollBar::handle:vertical:hover {{ background:#334155; }}

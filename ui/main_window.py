@@ -20,6 +20,7 @@ from .test_executor import TestExecutor
 from .reference_measurements import ReferenceMeasurements
 from .placa_detalhes import PlacaDetalhes
 from .technical_documents import TechnicalDocuments
+from .backup_settings import BackupSettingsDialog
 from db.models import BoardUnit
 
 
@@ -241,7 +242,7 @@ class MainWindow(QMainWindow):
 
         # Ícones em caracteres simples para manter aparência estável no Windows.
         self.btn_dashboard = SidebarButton("Dashboard", "▦")
-        self.btn_placas = SidebarButton("Equipamentos", "▣")
+        self.btn_placas = SidebarButton("Placas", "▣")
         self.btn_configuracoes = SidebarButton("Configurações", "⚙")
         self.btn_configuracoes.setCheckable(False)
         self.btn_logout = SidebarButton("Sair", "↪")
@@ -564,12 +565,49 @@ class MainWindow(QMainWindow):
         self.placas_view.refresh_boards(select_board_id=board_id)
 
     def closeEvent(self, event):
-        # Encerra a thread/VISA da aba de referências antes de fechar o app.
+        """Encerra instrumentos e cria o backup de fechamento, se habilitado."""
+        if getattr(self, "_close_backup_done", False):
+            super().closeEvent(event)
+            return
+
+        # Encerra a thread/VISA antes de copiar os dados do projeto.
         try:
             if hasattr(self, "referencias_view"):
                 self.referencias_view.shutdown()
         except Exception:
             pass
+
+        # Garante que alterações pendentes da sessão sejam persistidas antes
+        # do snapshot do banco SQLite.
+        try:
+            self.session.commit()
+        except Exception:
+            try:
+                self.session.rollback()
+            except Exception:
+                pass
+
+        result = None
+        try:
+            if self.backup_manager is not None:
+                result = self.backup_manager.create_close_backup()
+                self.backup_manager.stop_auto_backup()
+        except Exception as exc:
+            result = {"status": "failed", "error": str(exc)}
+
+        self._close_backup_done = True
+
+        # Não impede o usuário de fechar o sistema se o destino externo estiver
+        # indisponível, mas informa claramente que o backup falhou.
+        if result and result.get("status") not in {"success", "disabled", "busy"}:
+            QMessageBox.warning(
+                self,
+                "Backup de fechamento",
+                "O programa será fechado, mas o backup automático não pôde ser criado.\n\n"
+                f"Motivo: {result.get('error', result.get('status'))}\n\n"
+                "Verifique o diretório em Configurações > Backup.",
+            )
+
         super().closeEvent(event)
 
     def handle_dashboard_action(self, action_id):
@@ -709,19 +747,8 @@ class MainWindow(QMainWindow):
         )
 
     def _show_settings_info(self):
-        QMessageBox.information(
-            self,
-            "Configurações",
-            (
-                "Configurações disponíveis nesta versão:\n\n"
-                "• Banco de dados configurado pelo projeto\n"
-                "• Backup automático\n"
-                "• Cadastro de placas e modelos\n"
-                "• Planos e instrumentos de teste\n\n"
-                "Uma tela dedicada de configurações pode "
-                "ser adicionada em uma próxima etapa."
-            ),
-        )
+        dialog = BackupSettingsDialog(self.backup_manager, self)
+        dialog.exec()
 
     def _show_help(self):
         QMessageBox.information(

@@ -120,3 +120,27 @@ Traceback (most recent call last):
     self.btn_configuracoes.setCheckable(False)
     ^^^^^^^^^^^^^^^^^^^^^^
 AttributeError: 'MainWindow' object has no attribute 'btn_configuracoes'
+
+--- 2026-10-08 21:15:54
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\main_window.py", line 750, in _show_settings_info
+    dialog = BackupSettingsDialog(self.backup_manager, self)
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\backup_settings.py", line 34, in __init__
+    self._build_ui()
+    ~~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\backup_settings.py", line 80, in _build_ui
+    body = QWidget()
+           ^^^^^^^
+NameError: name 'QWidget' is not defined
+
+--- 2026-10-08 21:17:27
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\main_window.py", line 750, in _show_settings_info
+    dialog = BackupSettingsDialog(self.backup_manager, self)
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\backup_settings.py", line 34, in __init__
+    self._build_ui()
+    ~~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\backup_settings.py", line 80, in _build_ui
+    body = QWidget()
+           ^^^^^^^
+NameError: name 'QWidget' is not defined

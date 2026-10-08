@@ -1,617 +1,503 @@
 # utils/backup_manager.py
-import os
-import stat
-import shutil
-import zipfile
+from __future__ import annotations
+
 import json
-from datetime import datetime, timedelta
-from pathlib import Path
-import sqlite3
 import logging
-from typing import List, Dict, Optional
-import schedule
-import time
+import os
+import shutil
+import sqlite3
+import stat
 import threading
+import time
+import zipfile
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
 class BackupManager:
-    """Gerenciador de backup automático do sistema"""
-    
-    def __init__(self, db_path: str = "db/teste.db", backup_dir: str = "backups"):
-        self.db_path = Path(db_path)
-        self.backup_dir = Path(backup_dir)
-        self.config_file = Path("backup_config.json")
-        self._load_config()
-        
-        # Garante que os diretórios existam
-        self.backup_dir.mkdir(exist_ok=True)
-        self.db_path.parent.mkdir(exist_ok=True)
-        
-        # Thread para backups automáticos
-        self.scheduler_thread = None
+    """Gerencia backups locais do TechNord/TestFlow.
+
+    Recursos principais:
+      • backup diário (no máximo um por dia);
+      • backup ao fechar o programa;
+      • diretório de destino configurável;
+      • backup manual;
+      • retenção automática dos backups mais recentes.
+    """
+
+    def __init__(self, db_path: str = "db/teste.db", backup_dir: str | None = None):
+        self.project_root = Path(__file__).resolve().parent.parent
+        self.config_file = self.project_root / "backup_config.json"
+        self.db_path = self._resolve_project_path(db_path)
+
+        self.scheduler_thread: Optional[threading.Thread] = None
         self.stop_scheduler = False
-    
+        self._backup_lock = threading.Lock()
+
+        self._load_config()
+
+        # O argumento explícito tem prioridade apenas nesta inicialização.
+        if backup_dir:
+            self.config["backup_directory"] = str(Path(backup_dir).expanduser().resolve())
+            self._save_config()
+
+        self._refresh_backup_dir()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Configuração
+    # ------------------------------------------------------------------
+    def _resolve_project_path(self, value: str | Path) -> Path:
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+        return (self.project_root / path).resolve()
+
+    def _default_backup_dir(self) -> Path:
+        return (self.project_root / "backups").resolve()
+
+    @staticmethod
+    def _merge_defaults(current: dict, defaults: dict) -> dict:
+        result = dict(defaults)
+        for key, value in current.items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = BackupManager._merge_defaults(value, result[key])
+            else:
+                result[key] = value
+        return result
+
     def _load_config(self):
-        """Carrega ou cria configuração de backup"""
         default_config = {
-            "auto_backup": True,
-            "backup_interval_hours": 24,
-            "max_backups": 10,
+            "backup_directory": str(self._default_backup_dir()),
+            "daily_backup": True,
+            "backup_on_close": True,
+            "max_backups": 30,
+            "compression_level": 6,
             "backup_reports": True,
             "backup_logs": True,
-            "backup_images": False,
-            "compression_level": 6,
+            "backup_images": True,
+            "backup_documents": True,
             "last_backup": None,
+            "last_daily_backup": None,
+            "last_close_backup": None,
             "backup_stats": {
                 "total_backups": 0,
                 "last_successful": None,
-                "total_size_mb": 0
-            }
+                "total_size_mb": 0,
+            },
         }
-        
+
+        current = {}
         if self.config_file.exists():
             try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
-                logger.info("Configuração de backup carregada")
-            except Exception as e:
-                logger.error(f"Erro ao carregar configuração: {e}")
-                self.config = default_config
-        else:
-            self.config = default_config
-            self._save_config()
-    
+                current = json.loads(self.config_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Não foi possível ler backup_config.json: %s", exc)
+
+        # Compatibilidade com versões antigas.
+        if "auto_backup" in current and "daily_backup" not in current:
+            current["daily_backup"] = bool(current.get("auto_backup"))
+
+        self.config = self._merge_defaults(current, default_config)
+        self._save_config()
+
     def _save_config(self):
-        """Salva configuração de backup"""
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"Erro ao salvar configuração: {e}")
-    
+            self.config_file.write_text(
+                json.dumps(self.config, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.error("Erro ao salvar configuração de backup: %s", exc)
+
+    def _refresh_backup_dir(self):
+        configured = self.config.get("backup_directory") or str(self._default_backup_dir())
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = self._resolve_project_path(path)
+        self.backup_dir = path.resolve()
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.config["backup_directory"] = str(self.backup_dir)
+        self._save_config()
+
+    def get_backup_directory(self) -> str:
+        return str(self.backup_dir)
+
+    def set_backup_directory(self, directory: str):
+        path = Path(directory).expanduser()
+        if not path.is_absolute():
+            path = path.resolve()
+        path.mkdir(parents=True, exist_ok=True)
+
+        # Teste simples de escrita para evitar descobrir o erro somente no fechamento.
+        test_file = path / ".technord_backup_write_test"
+        try:
+            test_file.write_text("ok", encoding="utf-8")
+            test_file.unlink(missing_ok=True)
+        except Exception as exc:
+            raise PermissionError(f"Sem permissão para gravar em: {path}") from exc
+
+        self.config["backup_directory"] = str(path.resolve())
+        self._refresh_backup_dir()
+
+    def update_config(self, new_config: Dict):
+        directory = new_config.pop("backup_directory", None)
+        self.config.update(new_config)
+        if directory:
+            self.set_backup_directory(str(directory))
+        else:
+            self._save_config()
+
+        # Reinicia o monitor diário para refletir a nova configuração.
+        self.stop_auto_backup()
+        if self.config.get("daily_backup", True):
+            self.start_auto_backup()
+
+    # ------------------------------------------------------------------
+    # Criação de backup
+    # ------------------------------------------------------------------
     def create_backup(self, backup_type: str = "manual") -> Dict:
-        """
-        Cria backup completo do sistema
-        
-        Args:
-            backup_type: Tipo de backup ("manual", "auto", "emergency")
-            
-        Returns:
-            Dicionário com informações do backup
-        """
+        """Cria um ZIP com os dados importantes do sistema."""
+        if not self._backup_lock.acquire(blocking=False):
+            return {
+                "status": "busy",
+                "type": backup_type,
+                "error": "Já existe um backup em andamento.",
+            }
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"backup_{backup_type}_{timestamp}"
-        backup_path = self.backup_dir / backup_name
-        
+        work_dir = self.backup_dir / backup_name
+        zip_path = self.backup_dir / f"{backup_name}.zip"
+
         try:
-            logger.info(f"Iniciando backup: {backup_name}")
-            
-            # Cria diretório do backup
-            backup_path.mkdir(exist_ok=True)
-            
-            backup_info = {
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            work_dir.mkdir(parents=True, exist_ok=False)
+
+            info = {
                 "name": backup_name,
                 "type": backup_type,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "destination": str(zip_path),
                 "files": {},
-                "total_size_mb": 0,
-                "status": "in_progress"
+                "total_size_mb": 0.0,
+                "status": "in_progress",
             }
-            
-            # 1. Backup do banco de dados
-            db_backup_success = self._backup_database(backup_path, backup_info)
-            
-            # 2. Backup de relatórios (se habilitado)
+
+            db_ok = self._backup_database(work_dir, info)
+
+            if self.config.get("backup_documents", True):
+                self._backup_folder("documents", work_dir, info)
+            if self.config.get("backup_images", True):
+                self._backup_folder("board_images", work_dir, info)
+                self._backup_folder("temp_images", work_dir, info)
             if self.config.get("backup_reports", True):
-                self._backup_reports(backup_path, backup_info)
-            
-            # 3. Backup de logs (se habilitado)
+                self._backup_folder("reports", work_dir, info)
             if self.config.get("backup_logs", True):
-                self._backup_logs(backup_path, backup_info)
-            
-            # 4. Backup de imagens (se habilitado)
-            if self.config.get("backup_images", False):
-                self._backup_images(backup_path, backup_info)
-            
-            # 5. Backup de configurações
-            self._backup_configurations(backup_path, backup_info)
-            
-            # 6. Cria arquivo de informações do backup
-            self._create_backup_info_file(backup_path, backup_info)
-            
-            # 7. Compacta backup
-            zip_success = self._compress_backup(backup_path, backup_info)
-            
-            # 8. Limpa backup temporário. Em Windows/OneDrive, o copytree pode
-            # preservar o atributo somente leitura de diretórios (ex.: reports),
-            # fazendo shutil.rmtree falhar com WinError 5.
-            self._safe_rmtree(backup_path)
-            
-            # Atualiza estatísticas
-            if db_backup_success and zip_success:
-                backup_info["status"] = "success"
-                self._update_backup_stats(backup_info)
-                logger.info(f"Backup criado com sucesso: {backup_name}.zip")
-            else:
-                backup_info["status"] = "partial"
-                logger.warning(f"Backup parcial criado: {backup_name}.zip")
-            
-            # Limpa backups antigos
+                self._backup_folder("logs", work_dir, info, ignore_errors=True)
+
+            self._backup_configurations(work_dir, info)
+            self._create_backup_info_file(work_dir, info)
+            zip_ok = self._compress_backup(work_dir, zip_path)
+
+            info["status"] = "success" if db_ok and zip_ok else "partial"
+            if zip_path.exists():
+                info["compressed_size_mb"] = round(zip_path.stat().st_size / (1024 * 1024), 2)
+
+            if info["status"] == "success":
+                self._register_success(info)
+                if backup_type == "daily":
+                    self.config["last_daily_backup"] = info["timestamp"]
+                elif backup_type == "close":
+                    self.config["last_close_backup"] = info["timestamp"]
+                self._save_config()
+
             self.cleanup_old_backups()
-            
-            return backup_info
-            
-        except Exception as e:
-            logger.error(f"Erro ao criar backup: {e}")
-            # Tenta limpar diretório temporário em caso de erro
-            if backup_path.exists():
-                try:
-                    self._safe_rmtree(backup_path)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Não foi possível remover o diretório temporário "
-                        f"{backup_path}: {cleanup_error}"
-                    )
-            
+            return info
+
+        except Exception as exc:
+            logger.exception("Erro ao criar backup")
+            try:
+                if zip_path.exists() and zip_path.stat().st_size == 0:
+                    zip_path.unlink()
+            except Exception:
+                pass
             return {
                 "name": backup_name,
                 "type": backup_type,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
                 "status": "failed",
-                "error": str(e)
+                "error": str(exc),
             }
-    
+        finally:
+            try:
+                if work_dir.exists():
+                    self._safe_rmtree(work_dir)
+            except Exception as exc:
+                logger.warning("Não foi possível remover pasta temporária do backup: %s", exc)
+            self._backup_lock.release()
+
+    def _backup_database(self, work_dir: Path, info: Dict) -> bool:
+        if not self.db_path.exists():
+            logger.error("Banco de dados não encontrado em %s", self.db_path)
+            return False
+
+        target_dir = work_dir / "database"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_db = target_dir / self.db_path.name
+
+        # API de backup do SQLite: consistente mesmo com o banco aberto pelo app.
+        src = sqlite3.connect(str(self.db_path), timeout=30)
+        dst = sqlite3.connect(str(target_db), timeout=30)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+
+        # Dump SQL adicional para recuperação manual.
+        dump_path = target_dir / "dump.sql"
+        conn = sqlite3.connect(str(target_db), timeout=30)
+        try:
+            with dump_path.open("w", encoding="utf-8") as fh:
+                for line in conn.iterdump():
+                    fh.write(line + "\n")
+        finally:
+            conn.close()
+
+        size = target_db.stat().st_size + dump_path.stat().st_size
+        info["files"]["database"] = {
+            "size_mb": round(size / (1024 * 1024), 2),
+            "files": [target_db.name, dump_path.name],
+        }
+        info["total_size_mb"] += size / (1024 * 1024)
+        return True
+
+    def _backup_folder(self, relative_dir: str, work_dir: Path, info: Dict, ignore_errors: bool = False):
+        source = self.project_root / relative_dir
+        if not source.exists() or not source.is_dir():
+            return
+
+        destination = work_dir / relative_dir
+        copied = 0
+        total_size = 0
+
+        for file_path in source.rglob("*"):
+            if not file_path.is_file():
+                continue
+            try:
+                rel = file_path.relative_to(source)
+                dest = destination / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file_path, dest)
+                copied += 1
+                total_size += file_path.stat().st_size
+            except Exception as exc:
+                if not ignore_errors:
+                    logger.warning("Falha ao copiar %s: %s", file_path, exc)
+
+        if copied:
+            info["files"][relative_dir] = {
+                "file_count": copied,
+                "size_mb": round(total_size / (1024 * 1024), 2),
+            }
+            info["total_size_mb"] += total_size / (1024 * 1024)
+
+    def _backup_configurations(self, work_dir: Path, info: Dict):
+        dest = work_dir / "config"
+        dest.mkdir(parents=True, exist_ok=True)
+        total = 0
+        count = 0
+        for rel in ("db/config.py", "backup_config.json"):
+            source = self.project_root / rel
+            if source.exists() and source.is_file():
+                shutil.copy2(source, dest / source.name)
+                total += source.stat().st_size
+                count += 1
+        if count:
+            info["files"]["config"] = {
+                "file_count": count,
+                "size_mb": round(total / (1024 * 1024), 2),
+            }
+            info["total_size_mb"] += total / (1024 * 1024)
+
+    @staticmethod
+    def _create_backup_info_file(work_dir: Path, info: Dict):
+        (work_dir / "backup_info.json").write_text(
+            json.dumps(info, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _compress_backup(self, work_dir: Path, zip_path: Path) -> bool:
+        level = max(0, min(9, int(self.config.get("compression_level", 6))))
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=level) as archive:
+            for file_path in work_dir.rglob("*"):
+                if file_path.is_file():
+                    archive.write(file_path, file_path.relative_to(work_dir))
+        return zip_path.exists() and zip_path.stat().st_size > 0
+
+    def _register_success(self, info: Dict):
+        now = info["timestamp"]
+        self.config["last_backup"] = now
+        stats = self.config.setdefault("backup_stats", {})
+        stats["total_backups"] = int(stats.get("total_backups", 0)) + 1
+        stats["last_successful"] = now
+        stats["total_size_mb"] = round(
+            float(stats.get("total_size_mb", 0)) + float(info.get("compressed_size_mb", 0)),
+            2,
+        )
+
+    # ------------------------------------------------------------------
+    # Backup diário / fechamento
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _same_calendar_day(value: str | None, now: datetime) -> bool:
+        if not value:
+            return False
+        try:
+            return datetime.fromisoformat(value).date() == now.date()
+        except Exception:
+            return False
+
+    def backup_if_due(self) -> Dict:
+        """Cria o backup diário se ainda não houver um backup diário hoje."""
+        if not self.config.get("daily_backup", True):
+            return {"status": "disabled", "type": "daily"}
+
+        now = datetime.now()
+        if self._same_calendar_day(self.config.get("last_daily_backup"), now):
+            return {"status": "not_due", "type": "daily"}
+        return self.create_backup("daily")
+
+    def create_close_backup(self) -> Dict:
+        if not self.config.get("backup_on_close", True):
+            return {"status": "disabled", "type": "close"}
+        return self.create_backup("close")
+
+    def start_auto_backup(self):
+        """Mantém um verificador leve para o caso de o programa ficar aberto vários dias."""
+        if not self.config.get("daily_backup", True):
+            return
+        if self.scheduler_thread and self.scheduler_thread.is_alive():
+            return
+
+        self.stop_scheduler = False
+        self.scheduler_thread = threading.Thread(
+            target=self._scheduler_loop,
+            name="TechNordBackupScheduler",
+            daemon=True,
+        )
+        self.scheduler_thread.start()
+
+    def _scheduler_loop(self):
+        # A verificação inicial já é feita no main.py. Aqui aguardamos 30 minutos
+        # antes de cada nova verificação para não disputar o lock com um backup
+        # manual logo após salvar as configurações.
+        while not self.stop_scheduler:
+            for _ in range(180):
+                if self.stop_scheduler:
+                    return
+                time.sleep(10)
+            try:
+                self.backup_if_due()
+            except Exception:
+                logger.exception("Erro no verificador de backup diário")
+
+    def stop_auto_backup(self):
+        self.stop_scheduler = True
+        thread = self.scheduler_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.5)
+        self.scheduler_thread = None
+
+    # ------------------------------------------------------------------
+    # Consulta / retenção / restauração
+    # ------------------------------------------------------------------
+    def cleanup_old_backups(self):
+        max_backups = max(1, int(self.config.get("max_backups", 30)))
+        backups = self.list_backups()
+        for backup in backups[max_backups:]:
+            try:
+                Path(backup["file_path"]).unlink(missing_ok=True)
+            except Exception as exc:
+                logger.warning("Falha ao remover backup antigo %s: %s", backup.get("filename"), exc)
+
+    def list_backups(self) -> List[Dict]:
+        self._refresh_backup_dir()
+        rows: List[Dict] = []
+        for zip_file in self.backup_dir.glob("backup_*.zip"):
+            try:
+                parts = zip_file.stem.split("_", 2)
+                backup_type = parts[1] if len(parts) > 1 else "desconhecido"
+                timestamp = datetime.fromtimestamp(zip_file.stat().st_mtime)
+                rows.append({
+                    "filename": zip_file.name,
+                    "type": backup_type,
+                    "timestamp": timestamp,
+                    "size_mb": round(zip_file.stat().st_size / (1024 * 1024), 2),
+                    "file_path": str(zip_file),
+                })
+            except Exception:
+                continue
+        rows.sort(key=lambda x: x["timestamp"], reverse=True)
+        return rows
+
+    def restore_backup(self, backup_filename: str, restore_path: str = ".") -> bool:
+        backup_path = self.backup_dir / backup_filename
+        if not backup_path.exists():
+            return False
+        target = Path(restore_path).expanduser().resolve()
+        target.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(backup_path, "r") as archive:
+            archive.extractall(target)
+        return True
+
+    def verify_backup_integrity(self, backup_filename: str) -> Dict:
+        path = self.backup_dir / backup_filename
+        if not path.exists():
+            return {"status": "error", "message": "Backup não encontrado"}
+        try:
+            with zipfile.ZipFile(path, "r") as archive:
+                bad = archive.testzip()
+                if bad:
+                    return {"status": "corrupted", "message": f"Arquivo corrompido: {bad}"}
+                names = set(archive.namelist())
+                if not any(name.startswith("database/") for name in names):
+                    return {"status": "incomplete", "message": "Banco de dados ausente"}
+            return {"status": "ok", "message": "Backup íntegro"}
+        except zipfile.BadZipFile:
+            return {"status": "corrupted", "message": "ZIP inválido"}
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def get_backup_stats(self) -> Dict:
+        backups = self.list_backups()
+        return {
+            "total_backups": len(backups),
+            "total_size_mb": round(sum(x["size_mb"] for x in backups), 2),
+            "daily_backup": bool(self.config.get("daily_backup", True)),
+            "backup_on_close": bool(self.config.get("backup_on_close", True)),
+            "last_backup": self.config.get("last_backup"),
+            "last_daily_backup": self.config.get("last_daily_backup"),
+            "backup_directory": str(self.backup_dir),
+        }
+
     @staticmethod
     def _rmtree_remove_readonly(func, path, exc_info):
-        """Remove atributo somente leitura e repete uma operação do rmtree."""
         try:
             os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
             func(path)
         except Exception:
-            # Mantém a exceção original caso a segunda tentativa também falhe.
             raise exc_info[1]
 
     def _safe_rmtree(self, path: Path):
-        """Remove uma árvore mesmo quando diretórios copiados estão read-only."""
-        path = Path(path)
-        if not path.exists():
-            return
-        shutil.rmtree(path, onerror=self._rmtree_remove_readonly)
+        if path.exists():
+            shutil.rmtree(path, onerror=self._rmtree_remove_readonly)
 
-    def _backup_database(self, backup_path: Path, backup_info: Dict) -> bool:
-        """Faz backup do banco de dados"""
-        try:
-            if not self.db_path.exists():
-                logger.error("Arquivo do banco de dados não encontrado")
-                return False
-            
-            # Copia arquivo do banco
-            db_backup_path = backup_path / "database"
-            db_backup_path.mkdir(exist_ok=True)
-            
-            shutil.copy2(self.db_path, db_backup_path / "teste.db")
-            
-            # Tenta fazer backup SQL (dump)
-            self._create_sql_dump(db_backup_path)
-            
-            # Calcula tamanho
-            db_size = self.db_path.stat().st_size
-            backup_info["files"]["database"] = {
-                "size_mb": round(db_size / (1024 * 1024), 2),
-                "files": ["teste.db", "dump.sql"]
-            }
-            backup_info["total_size_mb"] += db_size / (1024 * 1024)
-            
-            logger.info("Backup do banco de dados concluído")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Erro no backup do banco: {e}")
-            return False
-    
-    def _create_sql_dump(self, backup_path: Path):
-        """Cria dump SQL do banco de dados"""
-        try:
-            dump_path = backup_path / "dump.sql"
-            
-            # Conecta ao banco e cria dump
-            conn = sqlite3.connect(self.db_path)
-            
-            with open(dump_path, 'w', encoding='utf-8') as f:
-                for line in conn.iterdump():
-                    f.write(f"{line}\n")
-            
-            conn.close()
-            logger.debug("Dump SQL criado com sucesso")
-            
-        except Exception as e:
-            logger.warning(f"Erro ao criar dump SQL: {e}")
-    
-    def _backup_reports(self, backup_path: Path, backup_info: Dict):
-        """Faz backup dos relatórios"""
-        try:
-            reports_dir = Path("reports")
-            if not reports_dir.exists():
-                return
-            
-            reports_backup_path = backup_path / "reports"
-            if reports_dir.exists():
-                shutil.copytree(reports_dir, reports_backup_path, 
-                              dirs_exist_ok=True)
-            
-            # Calcula tamanho
-            reports_size = sum(f.stat().st_size for f in reports_dir.rglob('*') if f.is_file())
-            backup_info["files"]["reports"] = {
-                "size_mb": round(reports_size / (1024 * 1024), 2),
-                "file_count": len(list(reports_dir.rglob('*')))
-            }
-            backup_info["total_size_mb"] += reports_size / (1024 * 1024)
-            
-            logger.info("Backup de relatórios concluído")
-            
-        except Exception as e:
-            logger.error(f"Erro no backup de relatórios: {e}")
-    
-    def _backup_logs(self, backup_path: Path, backup_info: Dict):
-        """Faz backup dos logs"""
-        try:
-            logs_dir = Path("logs")
-            if not logs_dir.exists():
-                return
-            
-            logs_backup_path = backup_path / "logs"
-            logs_backup_path.mkdir(exist_ok=True)
-            
-            # Copia arquivos individualmente para evitar erro de arquivo em uso (WinError 5)
-            logs_size = 0
-            file_count = 0
-            
-            for log_file in logs_dir.rglob('*'):
-                if log_file.is_file():
-                    try:
-                        dest_file = logs_backup_path / log_file.relative_to(logs_dir)
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(log_file, dest_file)
-                        logs_size += log_file.stat().st_size
-                        file_count += 1
-                    except Exception as copy_err:
-                        # Log file is likely in use, skip it or try reading
-                        pass
-            
-            if file_count > 0:
-                backup_info["files"]["logs"] = {
-                    "size_mb": round(logs_size / (1024 * 1024), 2),
-                    "file_count": file_count
-                }
-                backup_info["total_size_mb"] += logs_size / (1024 * 1024)
-            
-            logger.info("Backup de logs concluído")
-            
-        except Exception as e:
-            logger.error(f"Erro no backup de logs: {e}")
-    
-    def _backup_images(self, backup_path: Path, backup_info: Dict):
-        """Faz backup das imagens das placas"""
-        try:
-            # Isso precisaria ser adaptado para sua estrutura de imagens
-            images_dirs = ["board_images", "temp_images"]
-            total_size = 0
-            total_files = 0
-            
-            for img_dir in images_dirs:
-                img_path = Path(img_dir)
-                if img_path.exists():
-                    img_backup_path = backup_path / img_dir
-                    shutil.copytree(img_path, img_backup_path, 
-                                  dirs_exist_ok=True)
-                    
-                    dir_size = sum(f.stat().st_size for f in img_path.rglob('*') if f.is_file())
-                    dir_files = len(list(img_path.rglob('*')))
-                    
-                    total_size += dir_size
-                    total_files += dir_files
-            
-            if total_files > 0:
-                backup_info["files"]["images"] = {
-                    "size_mb": round(total_size / (1024 * 1024), 2),
-                    "file_count": total_files
-                }
-                backup_info["total_size_mb"] += total_size / (1024 * 1024)
-            
-            logger.info("Backup de imagens concluído")
-            
-        except Exception as e:
-            logger.error(f"Erro no backup de imagens: {e}")
-    
-    def _backup_configurations(self, backup_path: Path, backup_info: Dict):
-        """Faz backup das configurações"""
-        try:
-            config_files = [
-                "db/config.py",
-                "backup_config.json"
-            ]
-            
-            config_backup_path = backup_path / "config"
-            config_backup_path.mkdir(exist_ok=True)
-            
-            total_size = 0
-            
-            for config_file in config_files:
-                config_path = Path(config_file)
-                if config_path.exists():
-                    shutil.copy2(config_path, config_backup_path / config_path.name)
-                    total_size += config_path.stat().st_size
-            
-            if total_size > 0:
-                backup_info["files"]["config"] = {
-                    "size_mb": round(total_size / (1024 * 1024), 2),
-                    "file_count": len(config_files)
-                }
-                backup_info["total_size_mb"] += total_size / (1024 * 1024)
-            
-            logger.info("Backup de configurações concluído")
-            
-        except Exception as e:
-            logger.error(f"Erro no backup de configurações: {e}")
-    
-    def _create_backup_info_file(self, backup_path: Path, backup_info: Dict):
-        """Cria arquivo com informações do backup"""
-        try:
-            info_file = backup_path / "backup_info.json"
-            with open(info_file, 'w', encoding='utf-8') as f:
-                json.dump(backup_info, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"Erro ao criar arquivo de informações: {e}")
-    
-    def _compress_backup(self, backup_path: Path, backup_info: Dict) -> bool:
-        """Compacta o backup em arquivo ZIP"""
-        try:
-            zip_path = self.backup_dir / f"{backup_path.name}.zip"
-            
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, 
-                               compresslevel=self.config.get("compression_level", 6)) as zipf:
-                for file_path in backup_path.rglob('*'):
-                    if file_path.is_file():
-                        arcname = file_path.relative_to(backup_path)
-                        zipf.write(file_path, arcname)
-            
-            # Atualiza tamanho final
-            zip_size = zip_path.stat().st_size
-            backup_info["compressed_size_mb"] = round(zip_size / (1024 * 1024), 2)
-            backup_info["compression_ratio"] = round(
-                (backup_info["total_size_mb"] - backup_info["compressed_size_mb"]) / 
-                backup_info["total_size_mb"] * 100, 1
-            ) if backup_info["total_size_mb"] > 0 else 0
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Erro ao compactar backup: {e}")
-            return False
-    
-    def _update_backup_stats(self, backup_info: Dict):
-        """Atualiza estatísticas de backup"""
-        self.config["last_backup"] = backup_info["timestamp"]
-        self.config["backup_stats"]["total_backups"] += 1
-        self.config["backup_stats"]["last_successful"] = backup_info["timestamp"]
-        self.config["backup_stats"]["total_size_mb"] = round(
-            self.config["backup_stats"].get("total_size_mb", 0) + 
-            backup_info.get("compressed_size_mb", 0), 2
-        )
-        self._save_config()
-    
-    def list_backups(self) -> List[Dict]:
-        """Lista todos os backups disponíveis"""
-        backups = []
-        
-        for zip_file in self.backup_dir.glob("*.zip"):
-            try:
-                # Extrai informações do nome do arquivo
-                name_parts = zip_file.stem.split('_')
-                if len(name_parts) >= 3:
-                    backup_type = name_parts[1]
-                    timestamp_str = '_'.join(name_parts[2:])
-                    
-                    # Tenta parsear timestamp
-                    try:
-                        timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-                    except:
-                        timestamp = datetime.fromtimestamp(zip_file.stat().st_mtime)
-                    
-                    # Obtém informações do arquivo
-                    file_size = zip_file.stat().st_size
-                    
-                    backup_info = {
-                        "filename": zip_file.name,
-                        "type": backup_type,
-                        "timestamp": timestamp,
-                        "size_mb": round(file_size / (1024 * 1024), 2),
-                        "file_path": str(zip_file)
-                    }
-                    
-                    # Tenta carregar informações detalhadas
-                    info_file = self._extract_backup_info(zip_file)
-                    if info_file:
-                        backup_info.update(info_file)
-                    
-                    backups.append(backup_info)
-                    
-            except Exception as e:
-                logger.warning(f"Erro ao processar backup {zip_file.name}: {e}")
-        
-        # Ordena por timestamp (mais recente primeiro)
-        backups.sort(key=lambda x: x["timestamp"], reverse=True)
-        return backups
-    
-    def _extract_backup_info(self, zip_path: Path) -> Optional[Dict]:
-        """Extrai informações do backup do arquivo ZIP"""
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zipf:
-                if "backup_info.json" in zipf.namelist():
-                    with zipf.open("backup_info.json") as f:
-                        return json.load(f)
-        except:
-            pass
-        return None
-    
-    def restore_backup(self, backup_filename: str, restore_path: str = ".") -> bool:
-        """Restaura backup específico"""
-        try:
-            backup_path = self.backup_dir / backup_filename
-            if not backup_path.exists():
-                logger.error(f"Backup não encontrado: {backup_filename}")
-                return False
-            
-            restore_dir = Path(restore_path)
-            restore_dir.mkdir(exist_ok=True)
-            
-            logger.info(f"Iniciando restauração: {backup_filename}")
-            
-            with zipfile.ZipFile(backup_path, 'r') as zipf:
-                zipf.extractall(restore_dir)
-            
-            logger.info(f"Backup restaurado com sucesso em: {restore_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Erro ao restaurar backup: {e}")
-            return False
-    
-    def cleanup_old_backups(self):
-        """Remove backups antigos baseado na configuração"""
-        try:
-            max_backups = self.config.get("max_backups", 10)
-            backups = self.list_backups()
-            
-            if len(backups) > max_backups:
-                # Mantém os backups mais recentes
-                backups_to_keep = backups[:max_backups]
-                backups_to_delete = backups[max_backups:]
-                
-                for backup in backups_to_delete:
-                    try:
-                        backup_path = Path(backup["file_path"])
-                        backup_path.unlink()
-                        logger.info(f"Backup antigo removido: {backup_path.name}")
-                    except Exception as e:
-                        logger.error(f"Erro ao remover backup {backup['filename']}: {e}")
-                        
-        except Exception as e:
-            logger.error(f"Erro ao limpar backups antigos: {e}")
-    
-    def get_backup_stats(self) -> Dict:
-        """Retorna estatísticas de backup"""
-        backups = self.list_backups()
-        total_size = sum(b["size_mb"] for b in backups)
-        
-        return {
-            "total_backups": len(backups),
-            "total_size_mb": round(total_size, 2),
-            "auto_backup_enabled": self.config.get("auto_backup", True),
-            "last_backup": self.config.get("last_backup"),
-            "next_auto_backup": self._get_next_auto_backup_time()
-        }
-    
-    def _get_next_auto_backup_time(self) -> Optional[str]:
-        """Calcula próxima execução de backup automático"""
-        if not self.config.get("auto_backup", True):
-            return None
-        
-        last_backup = self.config.get("last_backup")
-        if last_backup:
-            try:
-                last_time = datetime.fromisoformat(last_backup)
-                next_time = last_time + timedelta(hours=self.config.get("backup_interval_hours", 24))
-                return next_time.isoformat()
-            except:
-                pass
-        
-        return None
-    
-    def start_auto_backup(self):
-        """Inicia agendamento de backups automáticos"""
-        if not self.config.get("auto_backup", True):
-            return
-        
-        interval_hours = self.config.get("backup_interval_hours", 24)
-        
-        # Agenda backup automático
-        schedule.every(interval_hours).hours.do(
-            lambda: self.create_backup("auto")
-        )
-        
-        # Inicia thread do agendador
-        self.stop_scheduler = False
-        self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
-        self.scheduler_thread.start()
-        
-        logger.info(f"Backup automático iniciado (intervalo: {interval_hours}h)")
-    
-    def _run_scheduler(self):
-        """Executa loop do agendador"""
-        while not self.stop_scheduler:
-            schedule.run_pending()
-            time.sleep(60)  # Verifica a cada minuto
-    
-    def stop_auto_backup(self):
-        """Para backups automáticos"""
-        self.stop_scheduler = True
-        if self.scheduler_thread:
-            self.scheduler_thread.join(timeout=5)
-        schedule.clear()
-        logger.info("Backup automático parado")
-    
-    def update_config(self, new_config: Dict):
-        """Atualiza configuração de backup"""
-        self.config.update(new_config)
-        self._save_config()
-        
-        # Reinicia auto backup se necessário
-        if self.scheduler_thread and self.scheduler_thread.is_alive():
-            self.stop_auto_backup()
-        
-        if self.config.get("auto_backup", True):
-            self.start_auto_backup()
-    
-    def verify_backup_integrity(self, backup_filename: str) -> Dict:
-        """Verifica integridade do backup"""
-        try:
-            backup_path = self.backup_dir / backup_filename
-            
-            if not backup_path.exists():
-                return {"status": "error", "message": "Backup não encontrado"}
-            
-            # Verifica se é um arquivo ZIP válido
-            try:
-                with zipfile.ZipFile(backup_path, 'r') as zipf:
-                    # Testa integridade do ZIP
-                    bad_file = zipf.testzip()
-                    if bad_file:
-                        return {"status": "corrupted", "message": f"Arquivo corrompido: {bad_file}"}
-                    
-                    # Verifica se tem arquivos essenciais
-                    essential_files = ["database/teste.db", "backup_info.json"]
-                    missing_files = [f for f in essential_files if f not in zipf.namelist()]
-                    
-                    if missing_files:
-                        return {"status": "incomplete", "message": f"Arquivos faltando: {missing_files}"}
-                    
-                    return {"status": "ok", "message": "Backup íntegro"}
-                    
-            except zipfile.BadZipFile:
-                return {"status": "corrupted", "message": "Arquivo ZIP corrompido"}
-                
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
 
-# Função de conveniência
 def create_quick_backup() -> bool:
-    """Cria backup rápido (função de conveniência)"""
-    try:
-        manager = BackupManager()
-        result = manager.create_backup("quick")
-        return result.get("status") == "success"
-    except Exception as e:
-        logger.error(f"Erro no backup rápido: {e}")
-        return False
+    manager = BackupManager()
+    return manager.create_backup("manual").get("status") == "success"

@@ -98,7 +98,8 @@ class TestApp(QWidget):
 
         # Sistema de backup
         self.backup_manager = BackupManager()
-        self.backup_manager.create_backup()
+        self.backup_manager.backup_if_due()
+        self.backup_manager.start_auto_backup()
 
         # Variáveis de estado
         self.selected_board = None
@@ -540,7 +541,10 @@ if __name__ == "__main__":
         from utils.backup_manager import BackupManager
         
         backup_manager = BackupManager()
-        backup_manager.create_backup("auto")
+        # Cria o backup diário somente se ainda não houver um backup hoje.
+        # O monitor também cobre o caso de o programa permanecer aberto por vários dias.
+        backup_manager.backup_if_due()
+        backup_manager.start_auto_backup()
         
         window = MainWindow(session=session, current_user=login.user, backup_manager=backup_manager)
         window.show()

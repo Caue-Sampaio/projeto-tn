@@ -21,6 +21,7 @@ from .reference_measurements import ReferenceMeasurements
 from .placa_detalhes import PlacaDetalhes
 from .technical_documents import TechnicalDocuments
 from .backup_settings import BackupSettingsDialog
+from .system_settings import SystemSettingsDialog
 from db.models import BoardUnit
 
 
@@ -485,6 +486,12 @@ class MainWindow(QMainWindow):
         # dispara mais refresh/reconstrução; os métodos de CRUD já atualizam a
         # lista quando os dados realmente mudam.
         if index == 1:
+            # Em rede, verifica se outro computador alterou o inventário.
+            # A tela só é reconstruída quando os dados realmente mudaram.
+            try:
+                self.placas_view.sync_from_server()
+            except Exception:
+                pass
             self.stack.setCurrentIndex(index)
             return
 
@@ -747,7 +754,7 @@ class MainWindow(QMainWindow):
         )
 
     def _show_settings_info(self):
-        dialog = BackupSettingsDialog(self.backup_manager, self)
+        dialog = SystemSettingsDialog(self.backup_manager, self)
         dialog.exec()
 
     def _show_help(self):

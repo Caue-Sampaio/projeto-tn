@@ -1,70 +1,45 @@
-# utils/image_paths.py
-"""Localiza as imagens das placas e guarda sempre o caminho ABSOLUTO no banco."""
+from __future__ import annotations
+
 import shutil
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-IMAGES_DIR = BASE_DIR / "imagens"
+from utils.storage import copy_file_to_storage, get_storage_root, resolve_storage_path
 
 
-def _to_posix(path):
-    return Path(path).resolve().as_posix()
+def import_image_to_project(source_path: str) -> str:
+    """Copia uma imagem para o storage compartilhado e retorna caminho relativo."""
+    return copy_file_to_storage(source_path, "board_images")
 
 
 def resolve_image_path(stored_path):
-    """Devolve o caminho ABSOLUTO real da imagem, ou None se não achar.
-
-    Tenta, na ordem:
-      1. o caminho salvo no banco;
-      2. o caminho relativo à pasta do projeto;
-      3. o mesmo NOME de arquivo em imagens/ e na raiz do projeto.
-    """
-    if not stored_path:
-        return None
-
-    p = Path(str(stored_path).replace("\\", "/"))
-    candidates = [p, BASE_DIR / p, IMAGES_DIR / p.name, BASE_DIR / p.name]
-
-    for c in candidates:
-        try:
-            if c.is_file():
-                return _to_posix(c)
-        except OSError:
-            pass
-    return None
-
-
-def import_image_to_project(source_path):
-    """Copia a imagem escolhida para imagens/ e devolve o caminho ABSOLUTO da cópia."""
-    IMAGES_DIR.mkdir(exist_ok=True)
-    src = Path(source_path)
-    dest = IMAGES_DIR / src.name
-
-    n = 1
-    while dest.exists() and dest.resolve() != src.resolve():
-        dest = IMAGES_DIR / f"{src.stem}_{n}{src.suffix}"
-        n += 1
-
-    if not dest.exists():
-        shutil.copy2(src, dest)
-
-    return _to_posix(dest)
+    path = resolve_storage_path(stored_path)
+    return path if path and path.exists() else None
 
 
 def heal_board_images(session, board):
-    """Regrava como ABSOLUTO o caminho de cada imagem da placa que for encontrada.
-
-    Devolve a lista de imagens que continuam sem arquivo.
-    """
+    """Resolve caminhos antigos. Se storage compartilhado estiver ativo, migra sob demanda."""
     missing = []
-    changed = False
-    for image in board.images:
-        real = resolve_image_path(image.path)
-        if real is None:
+    root = get_storage_root()
+    for image in getattr(board, "images", []) or []:
+        raw = getattr(image, "path", None)
+        resolved = resolve_storage_path(raw)
+        if not resolved or not resolved.exists():
             missing.append(image)
-        elif image.path != real:
-            image.path = real
-            changed = True
-    if changed:
-        session.commit()
+            continue
+
+        # Se o caminho é absoluto/local e há storage separado, copia para o storage
+        # para que os demais computadores também consigam acessar.
+        try:
+            if Path(raw).is_absolute() and root.resolve() not in resolved.resolve().parents:
+                new_rel = copy_file_to_storage(str(resolved), f"board_images/{board.id}")
+                image.path = new_rel
+                session.add(image)
+        except Exception:
+            pass
+
+    try:
+        if session.dirty:
+            session.commit()
+    except Exception:
+        session.rollback()
     return missing

@@ -1,6 +1,4 @@
 from pathlib import Path
-from datetime import datetime
-import shutil
 
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -12,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from db.models import Machine, BoardUnit, MachineDocument, BoardDocument
+from utils.storage import copy_file_to_storage, resolve_storage_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,24 +18,13 @@ DOC_ID_ROLE = Qt.ItemDataRole.UserRole
 
 
 def _resolve_file(stored_path):
-    if not stored_path:
-        return None
-    p = Path(str(stored_path))
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
-    return p if p.exists() else None
+    p = resolve_storage_path(stored_path)
+    return p if p and p.exists() else None
 
 
 def _copy_document(source_path: str, kind: str, entity_id: int) -> str:
-    source = Path(source_path)
     folder = "machines" if kind == "equipment" else "boards"
-    target_dir = PROJECT_ROOT / "documents" / folder / str(entity_id)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    safe_name = source.name.replace(" ", "_")
-    target = target_dir / f"{stamp}_{safe_name}"
-    shutil.copy2(source, target)
-    return str(target.relative_to(PROJECT_ROOT))
+    return copy_file_to_storage(source_path, f"documents/{folder}/{entity_id}")
 
 
 class AddDocumentDialog(QDialog):
@@ -241,6 +229,12 @@ class TechnicalDocuments(QWidget):
     # TREE / NAVIGATION
     # ------------------------------------------------------------------
     def refresh(self):
+        # Em ambiente multiusuário, descarta o cache da sessão antes de reler
+        # a biblioteca para enxergar documentos incluídos por outros PCs.
+        try:
+            self.session.expire_all()
+        except Exception:
+            pass
         selected = (self._kind, self._entity_id)
         self.tree.blockSignals(True)
         self.tree.clear()

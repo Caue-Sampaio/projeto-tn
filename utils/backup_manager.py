@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import stat
 import threading
 import time
@@ -13,6 +14,10 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from sqlalchemy import inspect, text
+from db.config import load_network_config, create_db_engine, is_postgres
+from utils.storage import get_storage_root
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +33,12 @@ class BackupManager:
       • retenção automática dos backups mais recentes.
     """
 
-    def __init__(self, db_path: str = "db/teste.db", backup_dir: str | None = None):
+    def __init__(self, db_path: str | None = None, backup_dir: str | None = None):
         self.project_root = Path(__file__).resolve().parent.parent
         self.config_file = self.project_root / "backup_config.json"
-        self.db_path = self._resolve_project_path(db_path)
+        self.network_config = load_network_config()
+        sqlite_path = db_path or self.network_config.get("sqlite_path") or "db/teste.db"
+        self.db_path = self._resolve_project_path(sqlite_path)
 
         self.scheduler_thread: Optional[threading.Thread] = None
         self.stop_scheduler = False
@@ -241,24 +248,27 @@ class BackupManager:
             self._backup_lock.release()
 
     def _backup_database(self, work_dir: Path, info: Dict) -> bool:
+        self.network_config = load_network_config()
+        if is_postgres(self.network_config):
+            return self._backup_postgres_database(work_dir, info)
+        return self._backup_sqlite_database(work_dir, info)
+
+    def _backup_sqlite_database(self, work_dir: Path, info: Dict) -> bool:
         if not self.db_path.exists():
-            logger.error("Banco de dados não encontrado em %s", self.db_path)
+            logger.error("Banco SQLite não encontrado em %s", self.db_path)
             return False
 
         target_dir = work_dir / "database"
         target_dir.mkdir(parents=True, exist_ok=True)
         target_db = target_dir / self.db_path.name
 
-        # API de backup do SQLite: consistente mesmo com o banco aberto pelo app.
         src = sqlite3.connect(str(self.db_path), timeout=30)
         dst = sqlite3.connect(str(target_db), timeout=30)
         try:
             src.backup(dst)
         finally:
-            dst.close()
-            src.close()
+            dst.close(); src.close()
 
-        # Dump SQL adicional para recuperação manual.
         dump_path = target_dir / "dump.sql"
         conn = sqlite3.connect(str(target_db), timeout=30)
         try:
@@ -270,14 +280,89 @@ class BackupManager:
 
         size = target_db.stat().st_size + dump_path.stat().st_size
         info["files"]["database"] = {
+            "engine": "sqlite",
             "size_mb": round(size / (1024 * 1024), 2),
             "files": [target_db.name, dump_path.name],
         }
         info["total_size_mb"] += size / (1024 * 1024)
         return True
 
+    @staticmethod
+    def _json_value(value):
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, (bytes, bytearray)):
+            return {"__bytes_hex__": bytes(value).hex()}
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+        return str(value)
+
+    def _backup_postgres_database(self, work_dir: Path, info: Dict) -> bool:
+        """Exporta PostgreSQL sem exigir pg_dump; usa pg_dump também quando disponível."""
+        target_dir = work_dir / "database"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        engine = create_db_engine(self.network_config)
+        export_path = target_dir / "postgres_export.json"
+        payload = {
+            "format": "technord-postgresql-json-v1",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "tables": {},
+        }
+        try:
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            with engine.connect() as conn:
+                for table_name in tables:
+                    quoted = '"' + table_name.replace('"', '""') + '"'
+                    rows = conn.execute(text(f"SELECT * FROM {quoted}")).mappings().all()
+                    payload["tables"][table_name] = [
+                        {key: self._json_value(value) for key, value in row.items()}
+                        for row in rows
+                    ]
+            export_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+            files = [export_path.name]
+            pg = self.network_config.get("postgres", {})
+            pg_dump = shutil.which("pg_dump")
+            if pg_dump:
+                dump_path = target_dir / "postgres.dump"
+                env = os.environ.copy(); env["PGPASSWORD"] = str(pg.get("password") or "")
+                cmd = [
+                    pg_dump, "-Fc", "-h", str(pg.get("host") or "localhost"),
+                    "-p", str(pg.get("port") or 5432), "-U", str(pg.get("user") or "technord_app"),
+                    "-d", str(pg.get("database") or "technord"), "-f", str(dump_path),
+                ]
+                kwargs = {"env": env, "stdout": subprocess.DEVNULL, "stderr": subprocess.PIPE, "text": True}
+                if os.name == "nt":
+                    kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                proc = subprocess.run(cmd, **kwargs)
+                if proc.returncode == 0 and dump_path.exists():
+                    files.append(dump_path.name)
+                else:
+                    logger.warning("pg_dump não concluiu: %s", (proc.stderr or "").strip())
+
+            total = sum((target_dir / name).stat().st_size for name in files if (target_dir / name).exists())
+            info["files"]["database"] = {
+                "engine": "postgresql",
+                "size_mb": round(total / (1024 * 1024), 2),
+                "files": files,
+            }
+            info["total_size_mb"] += total / (1024 * 1024)
+            return True
+        except Exception as exc:
+            logger.exception("Erro ao exportar PostgreSQL: %s", exc)
+            return False
+        finally:
+            engine.dispose()
+
     def _backup_folder(self, relative_dir: str, work_dir: Path, info: Dict, ignore_errors: bool = False):
-        source = self.project_root / relative_dir
+        if relative_dir in {"documents", "board_images", "temp_images", "reports"}:
+            source = get_storage_root() / relative_dir
+        else:
+            source = self.project_root / relative_dir
         if not source.exists() or not source.is_dir():
             return
 
@@ -311,7 +396,7 @@ class BackupManager:
         dest.mkdir(parents=True, exist_ok=True)
         total = 0
         count = 0
-        for rel in ("db/config.py", "backup_config.json"):
+        for rel in ("db/config.py", "backup_config.json", "network_config.json"):
             source = self.project_root / rel
             if source.exists() and source.is_file():
                 shutil.copy2(source, dest / source.name)

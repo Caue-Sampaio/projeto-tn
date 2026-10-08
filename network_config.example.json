@@ -1,0 +1,13 @@
+{
+  "mode": "postgresql",
+  "sqlite_path": "db/teste.db",
+  "postgres": {
+    "host": "192.168.1.100",
+    "port": 5432,
+    "database": "technord",
+    "user": "technord_app",
+    "password": "ALTERE_A_SENHA",
+    "connect_timeout": 5
+  },
+  "shared_storage": "\\\\SERVIDOR-TECHNORD\\TechNordData"
+}

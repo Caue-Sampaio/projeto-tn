@@ -992,6 +992,10 @@ class PlacaDetalhes(QWidget):
     def refresh(self):
         if not self.board_id:
             return
+        try:
+            self.session.expire_all()
+        except Exception:
+            pass
         self.board = self.session.get(BoardUnit, self.board_id)
         if not self.board:
             return

@@ -1,5 +1,5 @@
 # db/auto_migrate.py
-"""Migrações aditivas e seguras para bancos SQLite existentes."""
+"""Migrações aditivas para SQLite local e PostgreSQL em rede."""
 import logging
 
 from sqlalchemy import inspect, text
@@ -66,7 +66,7 @@ def ensure_schema(engine):
     _add_column(engine, "test_points", "last_scope_vrms_v", "FLOAT")
     _add_column(engine, "test_points", "last_scope_frequency_hz", "FLOAT")
     _add_column(engine, "test_points", "last_scope_duty_pct", "FLOAT")
-    _add_column(engine, "test_points", "last_scope_at", "DATETIME")
+    _add_column(engine, "test_points", "last_scope_at", "TIMESTAMP")
     _add_column(engine, "test_points", "last_oscilloscope_id", "VARCHAR(250)")
 
     with engine.begin() as conn:

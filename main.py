@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
-from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from db.models import Base, User, BoardModel, BoardUnit, TestPoint, BoardImage, TestPlan
 from engine.runner import run_test
@@ -19,7 +19,7 @@ from ui.plan_editor import PlanEditor
 from ui.plan_manager import PlanManager
 from ui.placa_tab import PlacaTab
 from ui.login import LoginDialog
-from db.config import DATABASE_URL
+from db.config import create_db_engine, load_network_config
 from utils.backup_manager import BackupManager
 from engine.logger import setup_logging
 import logging
@@ -527,11 +527,37 @@ if __name__ == "__main__":
         }
     """)
 
-    # Inicializa banco e sessão para login
-    engine = create_engine(DATABASE_URL)
-    Base.metadata.create_all(engine)
+    # Inicializa banco. Em modo de rede, tenta o PostgreSQL central.
+    # Se o servidor estiver indisponível, abre a configuração em vez de fechar
+    # o programa com traceback.
     from db.auto_migrate import ensure_schema
-    ensure_schema(engine)  # adiciona a coluna machine_id em bancos antigos
+    from ui.server_settings import ServerSettingsDialog
+
+    engine = None
+    while engine is None:
+        try:
+            candidate = create_db_engine()
+            with candidate.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            Base.metadata.create_all(candidate)
+            ensure_schema(candidate)
+            engine = candidate
+        except Exception as exc:
+            try:
+                candidate.dispose()
+            except Exception:
+                pass
+            dialog = ServerSettingsDialog(error_message=str(exc))
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                QMessageBox.critical(
+                    None,
+                    "Servidor indisponível",
+                    "Não foi possível abrir o banco de dados. O programa será encerrado.",
+                )
+                sys.exit(1)
+            # O diálogo salvou network_config.json. Repete a tentativa com a
+            # configuração nova sem precisar abrir o programa novamente.
+
     session = Session(engine)
 
     # Tela de login

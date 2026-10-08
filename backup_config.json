@@ -1,5 +1,5 @@
 {
-  "backup_directory": "C:\\Users\\leona\\OneDrive\\Área de Trabalho",
+  "backup_directory": "C:\\Users\\leona\\OneDrive\\Documentos\\backup-tn",
   "daily_backup": true,
   "backup_on_close": true,
   "max_backups": 10,
@@ -8,13 +8,13 @@
   "backup_logs": true,
   "backup_images": false,
   "backup_documents": true,
-  "last_backup": "2026-10-08T21:18:43",
+  "last_backup": "2026-10-08T22:00:15",
   "last_daily_backup": "2026-10-08T21:15:40",
-  "last_close_backup": "2026-10-08T21:17:31",
+  "last_close_backup": "2026-10-08T22:00:15",
   "backup_stats": {
-    "total_backups": 161,
-    "last_successful": "2026-10-08T21:18:43",
-    "total_size_mb": 296.05
+    "total_backups": 163,
+    "last_successful": "2026-10-08T22:00:15",
+    "total_size_mb": 332.29
   },
   "auto_backup": true,
   "backup_interval_hours": 24

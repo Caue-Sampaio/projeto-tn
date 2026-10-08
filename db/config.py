@@ -1,75 +1,93 @@
-# db/config.py
-import os
+from __future__ import annotations
+
+import json
 from pathlib import Path
+from typing import Any, Dict
 
-# Base directory do projeto (raiz)
-BASE_DIR = Path(__file__).resolve().parent.parent
+from sqlalchemy import URL, create_engine
 
-# Cria diretório db se não existir
-DB_DIR = BASE_DIR / "db"
-DB_DIR.mkdir(exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_FILE = PROJECT_ROOT / "network_config.json"
 
-# URL do banco de dados
-DATABASE_URL = f"sqlite:///{DB_DIR / 'teste.db'}"
-
-# Configurações do banco
-DB_CONFIG = {
-    "echo": False,  # Define como True para ver SQL no console (apenas desenvolvimento)
-    "pool_pre_ping": True,  # Verifica conexão antes de usar
-    "connect_args": {
-        "check_same_thread": False,  # Para SQLite
-        "timeout": 30  # Timeout de 30 segundos
-    }
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "mode": "sqlite",
+    "sqlite_path": "db/teste.db",
+    "postgres": {
+        "host": "",
+        "port": 5432,
+        "database": "technord",
+        "user": "technord_app",
+        "password": "",
+        "connect_timeout": 5,
+    },
+    "shared_storage": "",
 }
 
-# Configurações da aplicação
-APP_CONFIG = {
-    "app_name": "Sistema de Teste de Placas Eletrônicas",
-    "version": "2.0.0",
-    "company": "Laboratório Técnico",
-    "backup_interval_days": 7,
-    "max_backup_files": 10,
-    "auto_save_reports": True
-}
 
-# Configurações de relatórios
-REPORT_CONFIG = {
-    "default_author": "Sistema de Teste Automático",
-    "company_logo": None,  # Caminho para logo da empresa
-    "default_margins": {
-        "top": 2.0,
-        "bottom": 2.0,
-        "left": 2.0,
-        "right": 2.0
-    }
-}
+def _merge(current: dict, defaults: dict) -> dict:
+    out = dict(defaults)
+    for key, value in (current or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(value, out[key])
+        else:
+            out[key] = value
+    return out
 
-# Configurações de segurança
-SECURITY_CONFIG = {
-    "session_timeout_minutes": 120,
-    "max_login_attempts": 3,
-    "password_min_length": 4,
-    "require_strong_passwords": False  # Para desenvolvimento
-}
 
-def get_database_path():
-    """Retorna o caminho absoluto do arquivo do banco de dados"""
-    return str(DB_DIR / "teste.db")
+def load_network_config() -> dict:
+    current = {}
+    if CONFIG_FILE.exists():
+        try:
+            current = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            current = {}
+    return _merge(current, DEFAULT_CONFIG)
 
-def ensure_directories():
-    """Garante que todos os diretórios necessários existam"""
-    directories = [
-        "db",
-        "backups", 
-        "reports",
-        "logs",
-        "temp"
-    ]
-    
-    for directory in directories:
-        (BASE_DIR / directory).mkdir(exist_ok=True)
-    
-    print("Diretórios verificados/criados com sucesso")
 
-# Inicializa diretórios ao importar
-ensure_directories()
+def save_network_config(config: dict) -> None:
+    cfg = _merge(config, DEFAULT_CONFIG)
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def is_postgres(config: dict | None = None) -> bool:
+    cfg = config or load_network_config()
+    return str(cfg.get("mode", "sqlite")).lower() in {"postgres", "postgresql"}
+
+
+def get_database_url(config: dict | None = None):
+    cfg = config or load_network_config()
+    if is_postgres(cfg):
+        pg = cfg.get("postgres", {})
+        return URL.create(
+            "postgresql+psycopg",
+            username=pg.get("user") or "",
+            password=pg.get("password") or "",
+            host=pg.get("host") or "localhost",
+            port=int(pg.get("port") or 5432),
+            database=pg.get("database") or "technord",
+        )
+
+    path = Path(cfg.get("sqlite_path") or "db/teste.db").expanduser()
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path.as_posix()}"
+
+
+def create_db_engine(config: dict | None = None):
+    cfg = config or load_network_config()
+    url = get_database_url(cfg)
+    if is_postgres(cfg):
+        timeout = int(cfg.get("postgres", {}).get("connect_timeout") or 5)
+        return create_engine(
+            url,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+            future=True,
+            connect_args={"connect_timeout": timeout, "application_name": "TechNordTestFlow"},
+        )
+    return create_engine(url, future=True)
+
+
+# Mantido por compatibilidade com módulos antigos que ainda importam esta constante.
+DATABASE_URL = get_database_url()

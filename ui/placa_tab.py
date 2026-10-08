@@ -16,9 +16,9 @@ from db.models import (BoardUnit, BoardModel, User, BoardImage, TestPoint, TestP
                        MachineDocument, MachineFault)
 from engine.logger import log_user_action
 from utils.image_paths import import_image_to_project, resolve_image_path, heal_board_images
+from utils.storage import copy_file_to_storage, resolve_storage_path
 import logging
 import os
-import shutil
 from pathlib import Path
 from datetime import datetime, time
 
@@ -43,25 +43,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _machine_file_path(stored_path):
-    """Resolve um arquivo do dossiê, aceitando caminhos antigos/absolutos."""
-    if not stored_path:
-        return None
-    candidate = Path(str(stored_path))
-    if not candidate.is_absolute():
-        candidate = PROJECT_ROOT / candidate
-    return candidate if candidate.exists() else None
+    """Resolve documento do equipamento no storage compartilhado ou legado local."""
+    candidate = resolve_storage_path(stored_path)
+    return candidate if candidate and candidate.exists() else None
 
 
 def _copy_machine_document(source_path: str, machine_id: int) -> str:
-    """Copia o documento para dentro do projeto e devolve caminho relativo."""
-    source = Path(source_path)
-    target_dir = PROJECT_ROOT / "documents" / "machines" / str(machine_id)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    safe_name = source.name.replace(" ", "_")
-    target = target_dir / f"{stamp}_{safe_name}"
-    shutil.copy2(source, target)
-    return str(target.relative_to(PROJECT_ROOT))
+    """Copia documento do equipamento para o storage compartilhado."""
+    return copy_file_to_storage(source_path, f"documents/machines/{machine_id}")
 
 
 class MachineDocumentDialog(QDialog):
@@ -2296,11 +2285,33 @@ class PlacaTab(QWidget):
         self.filter_bar.board_type.blockSignals(False)
         self.filter_bar.refresh_visual_states()
 
+    def _catalog_signature(self, machines, boards):
+        machine_sig = tuple((m.id, m.name, m.code, m.description, m.image_path) for m in machines)
+        board_sig = tuple((b.id, b.name, b.model, b.version, b.serial_number, b.machine_id, bool(b.is_active)) for b in boards)
+        return machine_sig, board_sig
+
+    def sync_from_server(self):
+        """Consulta o banco central e só reconstrói a lista quando houver mudança real."""
+        try:
+            self.session.expire_all()
+            machines = self.session.query(Machine).order_by(Machine.name).all()
+            boards = self.session.query(BoardUnit).order_by(BoardUnit.name).all()
+            signature = self._catalog_signature(machines, boards)
+            if signature == getattr(self, "_last_catalog_signature", None):
+                return False
+            self.refresh_boards()
+            return True
+        except Exception as exc:
+            logger.warning("Falha ao sincronizar catálogo com servidor: %s", exc)
+            return False
+
     def refresh_boards(self, select_board_id=None, select_machine_id=None):
         """Recarrega inventário, métricas e filtros sem alterar a lógica do banco."""
         try:
+            self.session.expire_all()
             machines = self.session.query(Machine).order_by(Machine.name).all()
             boards = self.session.query(BoardUnit).order_by(BoardUnit.name).all()
+            self._last_catalog_signature = self._catalog_signature(machines, boards)
             self._catalog_machines = machines
             self._catalog_boards = boards
             self._last_runs = self._last_runs_map(boards)

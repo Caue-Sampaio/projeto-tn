@@ -80,7 +80,7 @@ class MachineDocumentDialog(QDialog):
 
         title = QLabel("Documento técnico")
         title.setObjectName("docDlgTitle")
-        subtitle = QLabel("Anexe datasheet, manual, diagrama, procedimento ou outro arquivo útil da máquina.")
+        subtitle = QLabel("Anexe datasheet, manual, diagrama, procedimento ou outro arquivo útil do equipamento.")
         subtitle.setObjectName("docDlgSub")
         subtitle.setWordWrap(True)
         root.addWidget(title); root.addWidget(subtitle)
@@ -295,204 +295,148 @@ class ImagePreviewLabel(QLabel):
 
 
 class BoardDialog(QDialog):
-    """Janela para cadastrar uma placa dentro de uma máquina (com imagem opcional)."""
+    """Cadastro profissional de placa com imagem opcional."""
 
     def __init__(self, machines, submit, parent=None, machine_id=None):
-        """machines: lista de (id, texto). submit: função que grava a placa e
-        devolve (placa, None) ou (None, mensagem_de_erro)."""
         super().__init__(parent)
         self._submit = submit
         self._image_path = None
         self.created_board = None
 
-        self.setWindowTitle("Nova Placa")
+        self.setWindowTitle("Cadastrar Placa")
         self.setModal(True)
-        self.setMinimumWidth(540)
+        self.resize(820, 620)
+        self.setMinimumSize(760, 580)
+        self._build_ui(machines, machine_id)
+        self._apply_style()
+        self.name_input.setFocus()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+    def _field_label(self, text):
+        lbl = QLabel(text)
+        lbl.setObjectName("boardDlgFieldLabel")
+        return lbl
 
-        header = QFrame()
-        header.setObjectName("dlgHeader")
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 18, 24, 18)
-        header_layout.setSpacing(2)
-        title = QLabel("🔌  Nova placa")
-        title.setObjectName("dlgTitle")
-        subtitle = QLabel("Cadastre a placa e escolha a máquina à qual ela pertence.")
-        subtitle.setObjectName("dlgSubtitle")
-        subtitle.setWordWrap(True)
-        header_layout.addWidget(title)
-        header_layout.addWidget(subtitle)
+    def _line(self, placeholder=""):
+        edit = QLineEdit()
+        edit.setObjectName("boardDlgInput")
+        edit.setPlaceholderText(placeholder)
+        edit.setMinimumHeight(42)
+        return edit
+
+    def _card(self, title, subtitle=""):
+        frame = QFrame(); frame.setObjectName("boardDlgCard")
+        lay = QVBoxLayout(frame); lay.setContentsMargins(18, 16, 18, 16); lay.setSpacing(11)
+        ttl = QLabel(title); ttl.setObjectName("boardDlgSectionTitle"); lay.addWidget(ttl)
+        if subtitle:
+            sub = QLabel(subtitle); sub.setObjectName("boardDlgSectionSub"); sub.setWordWrap(True); lay.addWidget(sub)
+        return frame, lay
+
+    def _build_ui(self, machines, machine_id):
+        root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+
+        header = QFrame(); header.setObjectName("boardDlgHeader")
+        hl = QHBoxLayout(header); hl.setContentsMargins(24, 18, 24, 18); hl.setSpacing(14)
+        title_box = QVBoxLayout(); title_box.setSpacing(3)
+        title = QLabel("Cadastrar placa"); title.setObjectName("boardDlgTitle")
+        subtitle = QLabel("Registre os dados de identificação da placa e vincule-a a um equipamento, se necessário.")
+        subtitle.setObjectName("boardDlgSubtitle"); subtitle.setWordWrap(True)
+        title_box.addWidget(title); title_box.addWidget(subtitle); hl.addLayout(title_box, 1)
+        chip = QLabel("NOVO CADASTRO"); chip.setObjectName("boardDlgChip"); hl.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
         root.addWidget(header)
 
-        body = QFrame()
-        body.setObjectName("dlgBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(24, 18, 24, 12)
-        body_layout.setSpacing(6)
+        scroll = QScrollArea(); scroll.setObjectName("boardDlgScroll"); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget(); body.setObjectName("boardDlgBody")
+        body_l = QVBoxLayout(body); body_l.setContentsMargins(20, 18, 20, 18); body_l.setSpacing(14)
 
-        def field_label(text):
-            label = QLabel(text)
-            label.setObjectName("dlgFieldLabel")
-            return label
+        top = QHBoxLayout(); top.setSpacing(14)
 
-        def line_edit(placeholder):
-            edit = QLineEdit()
-            edit.setPlaceholderText(placeholder)
-            edit.setMinimumHeight(40)
-            return edit
-
-        self.machine_combo = QComboBox()
-        self.machine_combo.setMinimumHeight(40)
-        self.machine_combo.addItem("— Sem máquina —", None)
+        id_card, id_l = self._card("Identificação da placa", "Dados principais usados para localizar e identificar a placa no sistema.")
+        self.machine_combo = QComboBox(); self.machine_combo.setObjectName("boardDlgCombo"); self.machine_combo.setMinimumHeight(42)
+        self.machine_combo.addItem("— Sem equipamento —", None)
         for mid, text in machines:
             self.machine_combo.addItem(text, mid)
         if machine_id is not None:
-            index = self.machine_combo.findData(machine_id)
-            if index >= 0:
-                self.machine_combo.setCurrentIndex(index)
+            idx = self.machine_combo.findData(machine_id)
+            if idx >= 0: self.machine_combo.setCurrentIndex(idx)
 
-        self.name_input = line_edit("Ex: Placa de Controle, Fonte Principal...")
-        self.model_input = line_edit("Ex: PCB-X1, MainBoard...")
-        self.version_input = line_edit("Ex: 1.0, RevA...")
-        self.serial_input = line_edit("Ex: SN001, 2024001...")
+        self.name_input = self._line("Ex.: Placa de controle principal")
+        self.model_input = self._line("Ex.: PCB-X1")
+        self.version_input = self._line("Ex.: RevA, 1.0")
+        self.serial_input = self._line("Ex.: SN001, 2024001")
 
-        model_box = QVBoxLayout()
-        model_box.setSpacing(6)
-        model_box.addWidget(field_label("MODELO *"))
-        model_box.addWidget(self.model_input)
-        version_box = QVBoxLayout()
-        version_box.setSpacing(6)
-        version_box.addWidget(field_label("VERSÃO *"))
-        version_box.addWidget(self.version_input)
-        model_row = QHBoxLayout()
-        model_row.setSpacing(14)
-        model_row.addLayout(model_box, 1)
-        model_row.addLayout(version_box, 1)
+        id_l.addWidget(self._field_label("EQUIPAMENTO")); id_l.addWidget(self.machine_combo)
+        id_l.addWidget(self._field_label("NOME DA PLACA *")); id_l.addWidget(self.name_input)
 
-        self.error_label = QLabel("")
-        self.error_label.setObjectName("dlgError")
-        self.error_label.setWordWrap(True)
+        model_row = QHBoxLayout(); model_row.setSpacing(12)
+        model_col = QVBoxLayout(); model_col.setSpacing(6); model_col.addWidget(self._field_label("MODELO *")); model_col.addWidget(self.model_input)
+        version_col = QVBoxLayout(); version_col.setSpacing(6); version_col.addWidget(self._field_label("VERSÃO *")); version_col.addWidget(self.version_input)
+        model_row.addLayout(model_col, 2); model_row.addLayout(version_col, 1)
+        id_l.addLayout(model_row)
 
+        id_l.addWidget(self._field_label("NÚMERO DE SÉRIE *")); id_l.addWidget(self.serial_input)
+        self.error_label = QLabel(""); self.error_label.setObjectName("boardDlgError"); self.error_label.setWordWrap(True); id_l.addWidget(self.error_label)
+        top.addWidget(id_card, 3)
+
+        image_card, image_l = self._card("Imagem da placa", "Use uma foto nítida da PCB para facilitar identificação e mapeamento.")
         self.image_preview = QLabel("Sem imagem")
-        self.image_preview.setObjectName("dlgImage")
+        self.image_preview.setObjectName("boardDlgImage")
         self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_preview.setFixedSize(170, 112)
+        self.image_preview.setMinimumSize(260, 190)
+        self.image_preview.setMaximumHeight(230)
+        image_l.addWidget(self.image_preview, 1)
 
-        pick_btn = QPushButton("🖼️  Escolher imagem")
-        pick_btn.setObjectName("dlgGhost")
-        pick_btn.setMinimumHeight(36)
-        pick_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        pick_btn.clicked.connect(self._pick_image)
-        remove_btn = QPushButton("Remover imagem")
-        remove_btn.setObjectName("dlgGhost")
-        remove_btn.setMinimumHeight(36)
-        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        remove_btn.clicked.connect(self._remove_image)
-        image_buttons = QVBoxLayout()
-        image_buttons.setSpacing(8)
-        image_buttons.addWidget(pick_btn)
-        image_buttons.addWidget(remove_btn)
-        image_buttons.addStretch()
-        image_row = QHBoxLayout()
-        image_row.setSpacing(14)
-        image_row.addWidget(self.image_preview)
-        image_row.addLayout(image_buttons, 1)
+        image_actions = QHBoxLayout(); image_actions.setSpacing(8)
+        pick_btn = QPushButton("Escolher imagem"); pick_btn.setObjectName("boardDlgSecondary"); pick_btn.clicked.connect(self._pick_image)
+        remove_btn = QPushButton("Remover"); remove_btn.setObjectName("boardDlgGhost"); remove_btn.clicked.connect(self._remove_image)
+        image_actions.addWidget(pick_btn, 1); image_actions.addWidget(remove_btn)
+        image_l.addLayout(image_actions)
+        top.addWidget(image_card, 2)
+        body_l.addLayout(top)
 
-        body_layout.addWidget(field_label("MÁQUINA"))
-        body_layout.addWidget(self.machine_combo)
-        body_layout.addSpacing(6)
-        body_layout.addWidget(field_label("NOME DA PLACA *"))
-        body_layout.addWidget(self.name_input)
-        body_layout.addSpacing(6)
-        body_layout.addLayout(model_row)
-        body_layout.addSpacing(6)
-        body_layout.addWidget(field_label("NÚMERO DE SÉRIE *"))
-        body_layout.addWidget(self.serial_input)
-        body_layout.addWidget(self.error_label)
-        body_layout.addSpacing(4)
-        body_layout.addWidget(field_label("IMAGEM DA PLACA (OPCIONAL)"))
-        body_layout.addLayout(image_row)
-        root.addWidget(body)
+        hint_card, hint_l = self._card("Próximos passos", "Após cadastrar a placa, você poderá abrir os detalhes para inserir pontos de teste, referências e imagens adicionais.")
+        hint = QLabel("A placa poderá ser movida entre equipamentos posteriormente sem perder seus pontos ou histórico.")
+        hint.setObjectName("boardDlgHint"); hint.setWordWrap(True); hint_l.addWidget(hint)
+        body_l.addWidget(hint_card)
+        body_l.addStretch(1)
+        scroll.setWidget(body); root.addWidget(scroll, 1)
 
-        footer = QFrame()
-        footer.setObjectName("dlgFooter")
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(24, 14, 24, 18)
-        footer_layout.addStretch()
-        cancel_btn = QPushButton("Cancelar")
-        cancel_btn.setObjectName("dlgCancel")
-        cancel_btn.setMinimumSize(110, 38)
-        cancel_btn.clicked.connect(self.reject)
-        save_btn = QPushButton("Cadastrar placa")
-        save_btn.setObjectName("dlgSave")
-        save_btn.setMinimumSize(160, 38)
-        save_btn.setDefault(True)
-        save_btn.clicked.connect(self._save)
-        footer_layout.addWidget(cancel_btn)
-        footer_layout.addWidget(save_btn)
+        footer = QFrame(); footer.setObjectName("boardDlgFooter")
+        fl = QHBoxLayout(footer); fl.setContentsMargins(20, 12, 20, 12); fl.setSpacing(10)
+        note = QLabel("* Campos obrigatórios"); note.setObjectName("boardDlgFooterHint")
+        cancel = QPushButton("Cancelar"); cancel.setObjectName("boardDlgSecondary"); cancel.setMinimumHeight(40); cancel.clicked.connect(self.reject)
+        save = QPushButton("Cadastrar placa"); save.setObjectName("boardDlgPrimary"); save.setMinimumHeight(40); save.setMinimumWidth(160); save.setDefault(True); save.clicked.connect(self._save)
+        fl.addWidget(note); fl.addStretch(1); fl.addWidget(cancel); fl.addWidget(save)
         root.addWidget(footer)
 
+    def _apply_style(self):
         self.setStyleSheet("""
-            QDialog { background: #FFFFFF; }
-            QFrame#dlgHeader {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                            stop:0 #0F766E, stop:1 #0284C7);
-            }
-            QLabel#dlgTitle {
-                color: #FFFFFF; font-size: 18px; font-weight: 700; background: transparent;
-            }
-            QLabel#dlgSubtitle { color: #E0F2FE; font-size: 12px; background: transparent; }
-            QFrame#dlgBody { background: #FFFFFF; }
-            QFrame#dlgFooter { background: #F8FAFC; border-top: 1px solid #E2E8F0; }
-            QLabel#dlgFieldLabel {
-                color: #475569; font-size: 11px; font-weight: 700; background: transparent;
-            }
-            QLabel#dlgError {
-                color: #DC2626; font-size: 12px; font-weight: 600; background: transparent;
-            }
-            QLabel#dlgImage {
-                background: #F8FAFC; color: #94A3B8; font-size: 12px;
-                border: 1.5px dashed #CBD5E1; border-radius: 10px;
-            }
-            QLineEdit, QComboBox {
-                background: #FFFFFF; color: #0F172A;
-                border: 1.5px solid #CBD5E1; border-radius: 8px;
-                padding: 8px 12px; font-size: 13px;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
-            }
-            QLineEdit:focus, QComboBox:focus { border: 1.5px solid #0284C7; }
-            QComboBox QAbstractItemView {
-                background: #FFFFFF; color: #0F172A;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
-            }
-            QPushButton#dlgGhost {
-                background: #F1F5F9; color: #1E293B;
-                border: 1px solid #CBD5E1; border-radius: 8px;
-                padding: 6px 14px; font-weight: 600; font-size: 12px;
-            }
-            QPushButton#dlgGhost:hover { background: #E2E8F0; }
-            QPushButton#dlgCancel {
-                background: #FFFFFF; color: #334155;
-                border: 1.5px solid #CBD5E1; border-radius: 8px;
-                padding: 8px 18px; font-weight: 600; font-size: 13px;
-            }
-            QPushButton#dlgCancel:hover { background: #F1F5F9; }
-            QPushButton#dlgSave {
-                background: #0F766E; color: #FFFFFF;
-                border: 1px solid #0D9488; border-radius: 8px;
-                padding: 8px 20px; font-weight: 700; font-size: 13px;
-            }
-            QPushButton#dlgSave:hover { background: #0D9488; }
+            QDialog { background:#F4F7FA; color:#0F172A; font-family:"Segoe UI", "Inter", Arial, sans-serif; }
+            QFrame#boardDlgHeader { background:#0B1220; border-bottom:1px solid #1E293B; }
+            QLabel#boardDlgTitle { color:#FFFFFF; font-size:20px; font-weight:800; }
+            QLabel#boardDlgSubtitle { color:#94A3B8; font-size:11px; }
+            QLabel#boardDlgChip { color:#67E8F9; background:#0B2533; border:1px solid #155E75; border-radius:11px; padding:6px 10px; font-size:9px; font-weight:800; }
+            QWidget#boardDlgBody, QScrollArea#boardDlgScroll, QScrollArea#boardDlgScroll > QWidget > QWidget { background:#F4F7FA; border:none; }
+            QFrame#boardDlgCard { background:#FFFFFF; border:1px solid #DCE3EA; border-radius:11px; }
+            QLabel#boardDlgSectionTitle { color:#0F172A; font-size:13px; font-weight:800; }
+            QLabel#boardDlgSectionSub { color:#64748B; font-size:10px; }
+            QLabel#boardDlgFieldLabel { color:#475569; font-size:9px; font-weight:800; letter-spacing:.5px; }
+            QLabel#boardDlgError { color:#DC2626; font-size:11px; font-weight:700; }
+            QLabel#boardDlgHint { color:#475569; font-size:11px; }
+            QLabel#boardDlgImage { background:#F8FAFC; color:#94A3B8; border:1px dashed #CBD5E1; border-radius:9px; font-size:11px; }
+            QLineEdit#boardDlgInput, QComboBox#boardDlgCombo { background:#F8FAFC; color:#0F172A; border:1px solid #CBD5E1; border-radius:8px; padding:9px 11px; font-size:12px; selection-background-color:#0F766E; selection-color:#FFFFFF; }
+            QLineEdit#boardDlgInput:focus, QComboBox#boardDlgCombo:focus { background:#FFFFFF; border:1px solid #0F766E; }
+            QComboBox#boardDlgCombo QAbstractItemView { background:#FFFFFF; color:#0F172A; border:1px solid #CBD5E1; selection-background-color:#CCFBF1; selection-color:#0F766E; }
+            QFrame#boardDlgFooter { background:#FFFFFF; border-top:1px solid #E2E8F0; }
+            QLabel#boardDlgFooterHint { color:#94A3B8; font-size:9px; }
+            QPushButton#boardDlgPrimary { background:#0F766E; color:#FFFFFF; border:none; border-radius:8px; padding:9px 18px; font-size:12px; font-weight:800; }
+            QPushButton#boardDlgPrimary:hover { background:#0D9488; }
+            QPushButton#boardDlgSecondary, QPushButton#boardDlgGhost { background:#FFFFFF; color:#334155; border:1px solid #CBD5E1; border-radius:8px; padding:8px 12px; font-size:10px; font-weight:700; }
+            QPushButton#boardDlgSecondary:hover, QPushButton#boardDlgGhost:hover { background:#F1F5F9; border-color:#94A3B8; }
         """)
-        self.name_input.setFocus()
 
     def _pick_image(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Escolher imagem da placa", "",
-            "Imagens (*.png *.jpg *.jpeg *.bmp *.gif *.webp)",
+            self, "Escolher imagem da placa", "", "Imagens (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
         )
         if path:
             self._image_path = path
@@ -505,17 +449,9 @@ class BoardDialog(QDialog):
     def _refresh_image_preview(self):
         pixmap = QPixmap(self._image_path) if self._image_path else QPixmap()
         if pixmap.isNull():
-            self.image_preview.clear()
-            self.image_preview.setText("Sem imagem")
-            return
+            self.image_preview.clear(); self.image_preview.setText("Sem imagem"); return
         self.image_preview.setText("")
-        self.image_preview.setPixmap(
-            pixmap.scaled(
-                QSize(160, 102),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        self.image_preview.setPixmap(pixmap.scaled(QSize(250, 205), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def _save(self, *_args):
         board, error = self._submit(
@@ -527,233 +463,271 @@ class BoardDialog(QDialog):
             self._image_path,
         )
         if error:
-            self.error_label.setText(error)  # o erro aparece aqui dentro, sem fechar a janela
+            self.error_label.setText(error)
             return
         self.created_board = board
         self.accept()
 
 
 class MachineDialog(QDialog):
-    """Janela para cadastrar ou editar uma máquina (com imagem ilustrativa opcional)."""
+    """Cadastro/edição de equipamento com dossiê técnico inicial."""
 
     def __init__(self, parent=None, machine=None):
         super().__init__(parent)
-        editing = machine is not None
-        self.setWindowTitle("Editar Máquina" if editing else "Nova Máquina")
-        self.setModal(True)
-        self.setMinimumWidth(500)
+        self._editing = machine is not None
+        self._machine = machine
+        self._session = getattr(parent, "session", None)
         self._image_path = machine.image_path if (machine and machine.image_path) else None
+        self._documents = []
+        self._faults = []
+        self._load_dossier_buffers()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # Cabeçalho
-        header = QFrame()
-        header.setObjectName("dlgHeader")
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 18, 24, 18)
-        header_layout.setSpacing(2)
-        title = QLabel("🏭  Editar máquina" if editing else "🏭  Nova máquina")
-        title.setObjectName("dlgTitle")
-        subtitle = QLabel(
-            "Atualize os dados do equipamento." if editing
-            else "Cadastre o equipamento. Depois você poderá adicionar as placas que ele possui."
-        )
-        subtitle.setObjectName("dlgSubtitle")
-        subtitle.setWordWrap(True)
-        header_layout.addWidget(title)
-        header_layout.addWidget(subtitle)
-        root.addWidget(header)
-
-        # Corpo
-        body = QFrame()
-        body.setObjectName("dlgBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(24, 20, 24, 12)
-        body_layout.setSpacing(6)
-
-        def field_label(text):
-            label = QLabel(text)
-            label.setObjectName("dlgFieldLabel")
-            return label
-
-        self.name_input = QLineEdit(machine.name if machine else "")
-        self.name_input.setPlaceholderText("Ex: Fresadora CNC 01, Inversor Linha 2...")
-        self.name_input.setMinimumHeight(40)
-        self.name_input.returnPressed.connect(self._validate)
-
-        self.code_input = QLineEdit((machine.code or "") if machine else "")
-        self.code_input.setPlaceholderText("Ex: MAQ-001")
-        self.code_input.setMinimumHeight(40)
-
-        self.desc_input = QTextEdit()
-        self.desc_input.setPlaceholderText("Observações sobre a máquina (local, linha de produção, fabricante...)")
-        self.desc_input.setFixedHeight(80)
-        if machine and machine.description:
-            self.desc_input.setPlainText(machine.description)
-
-        self.error_label = QLabel("")
-        self.error_label.setObjectName("dlgError")
-
-        # Imagem ilustrativa
-        self.image_preview = QLabel("Sem imagem")
-        self.image_preview.setObjectName("dlgImage")
-        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_preview.setFixedSize(170, 112)
-
-        pick_btn = QPushButton("🖼️  Escolher imagem")
-        pick_btn.setObjectName("dlgGhost")
-        pick_btn.setMinimumHeight(36)
-        pick_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        pick_btn.clicked.connect(self._pick_image)
-
-        remove_btn = QPushButton("Remover imagem")
-        remove_btn.setObjectName("dlgGhost")
-        remove_btn.setMinimumHeight(36)
-        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        remove_btn.clicked.connect(self._remove_image)
-
-        image_buttons = QVBoxLayout()
-        image_buttons.setSpacing(8)
-        image_buttons.addWidget(pick_btn)
-        image_buttons.addWidget(remove_btn)
-        image_buttons.addStretch()
-
-        image_row = QHBoxLayout()
-        image_row.setSpacing(14)
-        image_row.addWidget(self.image_preview)
-        image_row.addLayout(image_buttons, 1)
-
-        body_layout.addWidget(field_label("NOME DA MÁQUINA *"))
-        body_layout.addWidget(self.name_input)
-        body_layout.addWidget(self.error_label)
-        body_layout.addSpacing(4)
-        body_layout.addWidget(field_label("CÓDIGO (OPCIONAL)"))
-        body_layout.addWidget(self.code_input)
-        body_layout.addSpacing(10)
-        body_layout.addWidget(field_label("DESCRIÇÃO (OPCIONAL)"))
-        body_layout.addWidget(self.desc_input)
-        body_layout.addSpacing(10)
-        body_layout.addWidget(field_label("IMAGEM ILUSTRATIVA (OPCIONAL)"))
-        body_layout.addLayout(image_row)
-        root.addWidget(body)
-
-        # Rodapé
-        footer = QFrame()
-        footer.setObjectName("dlgFooter")
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(24, 14, 24, 18)
-        footer_layout.addStretch()
-
-        cancel_btn = QPushButton("Cancelar")
-        cancel_btn.setObjectName("dlgCancel")
-        cancel_btn.setMinimumSize(110, 38)
-        cancel_btn.clicked.connect(self.reject)
-
-        save_btn = QPushButton("Salvar alterações" if editing else "Cadastrar máquina")
-        save_btn.setObjectName("dlgSave")
-        save_btn.setMinimumSize(160, 38)
-        save_btn.setDefault(True)
-        save_btn.clicked.connect(self._validate)
-
-        footer_layout.addWidget(cancel_btn)
-        footer_layout.addWidget(save_btn)
-        root.addWidget(footer)
-
-        # Cores explícitas: o diálogo não depende do estilo de nenhuma tela por trás
-        self.setStyleSheet("""
-            QDialog { background: #FFFFFF; }
-            QFrame#dlgHeader {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                            stop:0 #0F766E, stop:1 #0284C7);
-            }
-            QLabel#dlgTitle {
-                color: #FFFFFF; font-size: 18px; font-weight: 700; background: transparent;
-            }
-            QLabel#dlgSubtitle { color: #E0F2FE; font-size: 12px; background: transparent; }
-            QFrame#dlgBody { background: #FFFFFF; }
-            QFrame#dlgFooter { background: #F8FAFC; border-top: 1px solid #E2E8F0; }
-            QLabel#dlgFieldLabel {
-                color: #475569; font-size: 11px; font-weight: 700; background: transparent;
-            }
-            QLabel#dlgError { color: #DC2626; font-size: 12px; background: transparent; }
-            QLabel#dlgImage {
-                background: #F8FAFC; color: #94A3B8; font-size: 12px;
-                border: 1.5px dashed #CBD5E1; border-radius: 10px;
-            }
-            QLineEdit, QTextEdit {
-                background: #FFFFFF; color: #0F172A;
-                border: 1.5px solid #CBD5E1; border-radius: 8px;
-                padding: 8px 12px; font-size: 13px;
-                selection-background-color: #0284C7; selection-color: #FFFFFF;
-            }
-            QLineEdit:focus, QTextEdit:focus { border: 1.5px solid #0284C7; }
-            QPushButton#dlgGhost {
-                background: #F1F5F9; color: #1E293B;
-                border: 1px solid #CBD5E1; border-radius: 8px;
-                padding: 6px 14px; font-weight: 600; font-size: 12px;
-            }
-            QPushButton#dlgGhost:hover { background: #E2E8F0; }
-            QPushButton#dlgCancel {
-                background: #FFFFFF; color: #334155;
-                border: 1.5px solid #CBD5E1; border-radius: 8px;
-                padding: 8px 18px; font-weight: 600; font-size: 13px;
-            }
-            QPushButton#dlgCancel:hover { background: #F1F5F9; }
-            QPushButton#dlgSave {
-                background: #0F766E; color: #FFFFFF;
-                border: 1px solid #0D9488; border-radius: 8px;
-                padding: 8px 20px; font-weight: 700; font-size: 13px;
-            }
-            QPushButton#dlgSave:hover { background: #0D9488; }
-        """)
+        self.setWindowTitle("Editar Equipamento" if self._editing else "Cadastrar Equipamento")
+        self.setModal(True)
+        self.resize(900, 760)
+        self.setMinimumSize(800, 680)
+        self._build_ui(machine)
+        self._apply_style()
         self._refresh_image_preview()
+        self._refresh_dossier_lists()
         self.name_input.setFocus()
 
-    def _pick_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Escolher imagem da máquina", "",
-            "Imagens (*.png *.jpg *.jpeg *.bmp *.gif *.webp)",
+    def _load_dossier_buffers(self):
+        if not self._machine or self._session is None:
+            return
+        docs = self._session.query(MachineDocument).filter(MachineDocument.machine_id == self._machine.id).order_by(MachineDocument.id.asc()).all()
+        self._documents = [
+            {
+                "id": d.id,
+                "title": d.title,
+                "file_path": d.file_path,
+                "original_name": getattr(d, "original_name", None),
+                "notes": getattr(d, "notes", None),
+                "source_path": None,
+            }
+            for d in docs
+        ]
+        faults = self._session.query(MachineFault).filter(MachineFault.machine_id == self._machine.id).order_by(MachineFault.id.asc()).all()
+        self._faults = [
+            {
+                "id": f.id,
+                "title": f.title,
+                "symptom": f.symptom,
+                "probable_cause": f.probable_cause,
+                "solution": f.solution,
+                "occurrences": int(f.occurrences or 1),
+                "notes": f.notes,
+            }
+            for f in faults
+        ]
+
+    def _field_label(self, text):
+        label = QLabel(text)
+        label.setObjectName("equipmentDlgFieldLabel")
+        return label
+
+    def _card(self, title_text, sub_text=""):
+        frame = QFrame(); frame.setObjectName("equipmentDlgCard")
+        lay = QVBoxLayout(frame); lay.setContentsMargins(18, 16, 18, 16); lay.setSpacing(12)
+        t = QLabel(title_text); t.setObjectName("equipmentDlgSectionTitle"); lay.addWidget(t)
+        if sub_text:
+            s = QLabel(sub_text); s.setObjectName("equipmentDlgSectionSub"); s.setWordWrap(True); lay.addWidget(s)
+        return frame, lay
+
+    def _build_ui(self, machine):
+        root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+
+        header = QFrame(); header.setObjectName("equipmentDlgHeader")
+        hl = QHBoxLayout(header); hl.setContentsMargins(24, 18, 24, 18); hl.setSpacing(14)
+        title_box = QVBoxLayout(); title_box.setSpacing(3)
+        title = QLabel("Editar equipamento" if self._editing else "Cadastrar equipamento")
+        title.setObjectName("equipmentDlgTitle")
+        subtitle = QLabel(
+            "Atualize os dados do equipamento e mantenha seu dossiê técnico organizado." if self._editing
+            else "Cadastre o equipamento e, se desejar, já inclua datasheets e defeitos conhecidos."
         )
-        if path:
-            self._image_path = path
-            self._refresh_image_preview()
+        subtitle.setObjectName("equipmentDlgSubtitle"); subtitle.setWordWrap(True)
+        title_box.addWidget(title); title_box.addWidget(subtitle); hl.addLayout(title_box, 1)
+        chip = QLabel("EDIÇÃO" if self._editing else "NOVO CADASTRO"); chip.setObjectName("equipmentDlgChip")
+        hl.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop); root.addWidget(header)
+
+        scroll = QScrollArea(); scroll.setObjectName("equipmentDlgScroll"); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget(); body.setObjectName("equipmentDlgBody")
+        body_layout = QVBoxLayout(body); body_layout.setContentsMargins(20, 18, 20, 18); body_layout.setSpacing(14)
+
+        top = QHBoxLayout(); top.setSpacing(14)
+        id_card, id_l = self._card("Identificação", "Dados principais usados para localizar o equipamento no sistema.")
+        self.name_input = QLineEdit(machine.name if machine else ""); self.name_input.setObjectName("equipmentDlgInput")
+        self.name_input.setPlaceholderText("Ex.: Inversor Linha 2, Fresadora CNC 01..."); self.name_input.setMinimumHeight(42)
+        self.code_input = QLineEdit((machine.code or "") if machine else ""); self.code_input.setObjectName("equipmentDlgInput")
+        self.code_input.setPlaceholderText("Ex.: EQP-001"); self.code_input.setMinimumHeight(42)
+        id_l.addWidget(self._field_label("NOME DO EQUIPAMENTO *")); id_l.addWidget(self.name_input)
+        id_l.addWidget(self._field_label("CÓDIGO / IDENTIFICAÇÃO (OPCIONAL)")); id_l.addWidget(self.code_input)
+        self.error_label = QLabel(""); self.error_label.setObjectName("equipmentDlgError"); self.error_label.setWordWrap(True); id_l.addWidget(self.error_label)
+        id_l.addStretch(1); top.addWidget(id_card, 3)
+
+        image_card, image_l = self._card("Imagem do equipamento", "Foto ou ilustração para identificação visual.")
+        self.image_preview = QLabel("Sem imagem"); self.image_preview.setObjectName("equipmentDlgImage")
+        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter); self.image_preview.setMinimumSize(240, 150); self.image_preview.setMaximumHeight(180)
+        image_actions = QHBoxLayout(); image_actions.setSpacing(8)
+        pick_btn = QPushButton("Escolher imagem"); pick_btn.setObjectName("equipmentDlgSecondary"); pick_btn.clicked.connect(self._pick_image)
+        remove_btn = QPushButton("Remover"); remove_btn.setObjectName("equipmentDlgGhost"); remove_btn.clicked.connect(self._remove_image)
+        image_actions.addWidget(pick_btn, 1); image_actions.addWidget(remove_btn); image_l.addWidget(self.image_preview, 1); image_l.addLayout(image_actions)
+        top.addWidget(image_card, 2); body_layout.addLayout(top)
+
+        desc_card, desc_l = self._card("Descrição técnica", "Informações úteis para identificar ou contextualizar o equipamento.")
+        self.desc_input = QTextEdit(); self.desc_input.setObjectName("equipmentDlgNotes"); self.desc_input.setMinimumHeight(105)
+        self.desc_input.setPlaceholderText("Ex.: equipamento da linha de envase, painel 02, responsável pelo acionamento principal...")
+        if machine and machine.description: self.desc_input.setPlainText(machine.description)
+        desc_l.addWidget(self.desc_input); body_layout.addWidget(desc_card)
+
+        dossier_card, dossier_l = self._card(
+            "Dossiê técnico inicial",
+            "Você pode anexar documentos e registrar defeitos conhecidos agora. Também será possível alterar isso depois no painel do equipamento."
+        )
+        dossier_cols = QHBoxLayout(); dossier_cols.setSpacing(14)
+
+        doc_box = QFrame(); doc_box.setObjectName("equipmentDlgDossierBox")
+        dl = QVBoxLayout(doc_box); dl.setContentsMargins(14, 12, 14, 12); dl.setSpacing(9)
+        dt = QLabel("DOCUMENTOS / DATASHEETS"); dt.setObjectName("equipmentDlgMiniTitle"); dl.addWidget(dt)
+        ds = QLabel("Manuais, datasheets, diagramas, procedimentos e outros arquivos técnicos."); ds.setWordWrap(True); ds.setObjectName("equipmentDlgMiniSub"); dl.addWidget(ds)
+        self.docs_list = QListWidget(); self.docs_list.setObjectName("equipmentDlgList"); self.docs_list.setMinimumHeight(145); dl.addWidget(self.docs_list, 1)
+        da = QHBoxLayout(); da.setSpacing(7)
+        add_doc = QPushButton("+ Adicionar arquivo"); add_doc.setObjectName("equipmentDlgMiniPrimary"); add_doc.clicked.connect(self._add_document_buffer)
+        rem_doc = QPushButton("Remover"); rem_doc.setObjectName("equipmentDlgMiniGhost"); rem_doc.clicked.connect(self._remove_document_buffer)
+        da.addWidget(add_doc, 1); da.addWidget(rem_doc); dl.addLayout(da); dossier_cols.addWidget(doc_box, 1)
+
+        fault_box = QFrame(); fault_box.setObjectName("equipmentDlgDossierBox")
+        flt = QVBoxLayout(fault_box); flt.setContentsMargins(14, 12, 14, 12); flt.setSpacing(9)
+        ft = QLabel("DEFEITOS CONHECIDOS"); ft.setObjectName("equipmentDlgMiniTitle"); flt.addWidget(ft)
+        fs = QLabel("Sintomas, causas prováveis e procedimentos de correção já conhecidos."); fs.setWordWrap(True); fs.setObjectName("equipmentDlgMiniSub"); flt.addWidget(fs)
+        self.faults_list = QListWidget(); self.faults_list.setObjectName("equipmentDlgList"); self.faults_list.setMinimumHeight(145)
+        self.faults_list.itemDoubleClicked.connect(lambda _item: self._edit_fault_buffer()); flt.addWidget(self.faults_list, 1)
+        fa = QHBoxLayout(); fa.setSpacing(7)
+        add_fault = QPushButton("+ Adicionar defeito"); add_fault.setObjectName("equipmentDlgMiniPrimary"); add_fault.clicked.connect(self._add_fault_buffer)
+        edit_fault = QPushButton("Editar"); edit_fault.setObjectName("equipmentDlgMiniGhost"); edit_fault.clicked.connect(self._edit_fault_buffer)
+        rem_fault = QPushButton("Remover"); rem_fault.setObjectName("equipmentDlgMiniGhost"); rem_fault.clicked.connect(self._remove_fault_buffer)
+        fa.addWidget(add_fault, 1); fa.addWidget(edit_fault); fa.addWidget(rem_fault); flt.addLayout(fa); dossier_cols.addWidget(fault_box, 1)
+
+        dossier_l.addLayout(dossier_cols); body_layout.addWidget(dossier_card); body_layout.addStretch(1)
+        scroll.setWidget(body); root.addWidget(scroll, 1)
+
+        footer = QFrame(); footer.setObjectName("equipmentDlgFooter")
+        footer_l = QHBoxLayout(footer); footer_l.setContentsMargins(20, 12, 20, 12); footer_l.setSpacing(10)
+        hint = QLabel("* Campo obrigatório • documentos e defeitos são salvos junto com o equipamento"); hint.setObjectName("equipmentDlgFooterHint")
+        cancel = QPushButton("Cancelar"); cancel.setObjectName("equipmentDlgSecondary"); cancel.setMinimumHeight(40); cancel.clicked.connect(self.reject)
+        save = QPushButton("Salvar alterações" if self._editing else "Cadastrar equipamento"); save.setObjectName("equipmentDlgPrimary")
+        save.setMinimumHeight(40); save.setMinimumWidth(180); save.setDefault(True); save.clicked.connect(self._validate)
+        footer_l.addWidget(hint); footer_l.addStretch(1); footer_l.addWidget(cancel); footer_l.addWidget(save); root.addWidget(footer)
+
+    def _apply_style(self):
+        self.setStyleSheet("""
+            QDialog { background:#F4F7FA; color:#0F172A; font-family:"Segoe UI", "Inter", Arial, sans-serif; }
+            QFrame#equipmentDlgHeader { background:#0B1220; border-bottom:1px solid #1E293B; }
+            QLabel#equipmentDlgTitle { color:#FFFFFF; font-size:20px; font-weight:800; }
+            QLabel#equipmentDlgSubtitle { color:#94A3B8; font-size:11px; }
+            QLabel#equipmentDlgChip { color:#67E8F9; background:#0B2533; border:1px solid #155E75; border-radius:11px; padding:6px 10px; font-size:9px; font-weight:800; }
+            QWidget#equipmentDlgBody, QScrollArea#equipmentDlgScroll, QScrollArea#equipmentDlgScroll > QWidget > QWidget { background:#F4F7FA; border:none; }
+            QFrame#equipmentDlgCard { background:#FFFFFF; border:1px solid #DCE3EA; border-radius:11px; }
+            QLabel#equipmentDlgSectionTitle { color:#0F172A; font-size:13px; font-weight:800; }
+            QLabel#equipmentDlgSectionSub { color:#64748B; font-size:10px; }
+            QLabel#equipmentDlgFieldLabel { color:#475569; font-size:9px; font-weight:800; letter-spacing:.5px; }
+            QLabel#equipmentDlgError { color:#DC2626; font-size:11px; font-weight:650; }
+            QLineEdit#equipmentDlgInput, QTextEdit#equipmentDlgNotes { background:#F8FAFC; color:#0F172A; border:1px solid #CBD5E1; border-radius:8px; padding:9px 11px; font-size:12px; selection-background-color:#0F766E; selection-color:#FFFFFF; }
+            QLineEdit#equipmentDlgInput:focus, QTextEdit#equipmentDlgNotes:focus { background:#FFFFFF; border:1px solid #0F766E; }
+            QLabel#equipmentDlgImage { background:#F8FAFC; color:#94A3B8; border:1px dashed #CBD5E1; border-radius:9px; font-size:11px; }
+            QFrame#equipmentDlgDossierBox { background:#F8FAFC; border:1px solid #E2E8F0; border-radius:9px; }
+            QLabel#equipmentDlgMiniTitle { color:#334155; font-size:9px; font-weight:900; letter-spacing:.5px; }
+            QLabel#equipmentDlgMiniSub { color:#64748B; font-size:9px; }
+            QListWidget#equipmentDlgList { background:#FFFFFF; color:#0F172A; border:1px solid #D7E0E8; border-radius:8px; padding:4px; outline:none; }
+            QListWidget#equipmentDlgList::item { min-height:38px; padding:5px 8px; border-bottom:1px solid #EEF2F6; }
+            QListWidget#equipmentDlgList::item:selected { background:#E6FFFB; color:#0F766E; border-radius:5px; }
+            QFrame#equipmentDlgFooter { background:#FFFFFF; border-top:1px solid #E2E8F0; }
+            QLabel#equipmentDlgFooterHint { color:#94A3B8; font-size:9px; }
+            QPushButton#equipmentDlgPrimary { background:#0F766E; color:#FFFFFF; border:none; border-radius:8px; padding:9px 18px; font-size:12px; font-weight:800; }
+            QPushButton#equipmentDlgPrimary:hover { background:#0D9488; }
+            QPushButton#equipmentDlgSecondary, QPushButton#equipmentDlgGhost, QPushButton#equipmentDlgMiniGhost { background:#FFFFFF; color:#334155; border:1px solid #CBD5E1; border-radius:8px; padding:8px 12px; font-size:10px; font-weight:700; }
+            QPushButton#equipmentDlgSecondary:hover, QPushButton#equipmentDlgGhost:hover, QPushButton#equipmentDlgMiniGhost:hover { background:#F1F5F9; border-color:#94A3B8; }
+            QPushButton#equipmentDlgMiniPrimary { background:#ECFDF5; color:#0F766E; border:1px solid #99F6E4; border-radius:8px; padding:8px 12px; font-size:10px; font-weight:800; }
+            QPushButton#equipmentDlgMiniPrimary:hover { background:#CCFBF1; }
+        """)
+
+    def _pick_image(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Escolher imagem do equipamento", "", "Imagens (*.png *.jpg *.jpeg *.bmp *.gif *.webp)")
+        if path: self._image_path = path; self._refresh_image_preview()
 
     def _remove_image(self):
-        self._image_path = None
-        self._refresh_image_preview()
+        self._image_path = None; self._refresh_image_preview()
 
     def _refresh_image_preview(self):
         real = resolve_image_path(self._image_path) if self._image_path else None
         pixmap = QPixmap(real) if real else QPixmap()
         if pixmap.isNull():
-            self.image_preview.clear()
-            self.image_preview.setText("Sem imagem" if not self._image_path else "Imagem\nnão encontrada")
-            return
+            self.image_preview.clear(); self.image_preview.setText("Sem imagem" if not self._image_path else "Imagem\nnão encontrada"); return
         self.image_preview.setText("")
-        self.image_preview.setPixmap(
-            pixmap.scaled(
-                QSize(160, 102),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        self.image_preview.setPixmap(pixmap.scaled(QSize(230, 160), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def _refresh_dossier_lists(self):
+        self.docs_list.clear()
+        for doc in self._documents:
+            name = doc.get("original_name") or (Path(doc.get("source_path") or doc.get("file_path") or "arquivo").name)
+            item = QListWidgetItem(f"{doc.get('title') or 'Documento'}\n{name}")
+            item.setToolTip(doc.get("notes") or name); self.docs_list.addItem(item)
+        self.faults_list.clear()
+        for fault in self._faults:
+            count = int(fault.get("occurrences") or 1)
+            item = QListWidgetItem(f"{fault.get('title') or 'Defeito'}\n{count} ocorrência(s) • {fault.get('symptom') or ''}")
+            item.setToolTip(fault.get("solution") or ""); self.faults_list.addItem(item)
+
+    def _add_document_buffer(self):
+        dlg = MachineDocumentDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted: return
+        title, source, notes = dlg.values()
+        self._documents.append({"id": None, "title": title, "file_path": None, "original_name": Path(source).name, "notes": notes or None, "source_path": source})
+        self._refresh_dossier_lists(); self.docs_list.setCurrentRow(self.docs_list.count() - 1)
+
+    def _remove_document_buffer(self):
+        row = self.docs_list.currentRow()
+        if row < 0: return
+        del self._documents[row]; self._refresh_dossier_lists()
+
+    def _add_fault_buffer(self):
+        dlg = MachineFaultDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted: return
+        data = dlg.values(); data["id"] = None; self._faults.append(data)
+        self._refresh_dossier_lists(); self.faults_list.setCurrentRow(self.faults_list.count() - 1)
+
+    def _edit_fault_buffer(self):
+        row = self.faults_list.currentRow()
+        if row < 0: return
+        data = self._faults[row]
+        class _FaultProxy:
+            pass
+        proxy = _FaultProxy()
+        for key in ("title", "symptom", "probable_cause", "solution", "occurrences", "notes"):
+            setattr(proxy, key, data.get(key))
+        dlg = MachineFaultDialog(self, proxy)
+        if dlg.exec() != QDialog.DialogCode.Accepted: return
+        edited = dlg.values(); edited["id"] = data.get("id"); self._faults[row] = edited; self._refresh_dossier_lists(); self.faults_list.setCurrentRow(row)
+
+    def _remove_fault_buffer(self):
+        row = self.faults_list.currentRow()
+        if row < 0: return
+        del self._faults[row]; self._refresh_dossier_lists()
 
     def _validate(self):
         if not self.name_input.text().strip():
-            self.error_label.setText("Informe o nome da máquina.")
-            self.name_input.setFocus()
-            return
-        self.accept()
+            self.error_label.setText("Informe o nome do equipamento."); self.name_input.setFocus(); return
+        self.error_label.clear(); self.accept()
 
     def values(self):
-        """Devolve (nome, código, descrição, caminho_da_imagem_ou_None)."""
         return (
             self.name_input.text().strip(),
             self.code_input.text().strip(),
             self.desc_input.toPlainText().strip(),
             self._image_path,
+            [dict(d) for d in self._documents],
+            [dict(f) for f in self._faults],
         )
 
 
@@ -841,8 +815,8 @@ class BoardDetailsDialog(QDialog):
         
         basic_layout.addRow("Nome:", self.name_label)
         basic_layout.addRow("Modelo/Versão:", self.model_label)
-        self.machine_label = QLabel(self.board.machine.name if self.board.machine else "Sem máquina")
-        basic_layout.addRow("Máquina:", self.machine_label)
+        self.machine_label = QLabel(self.board.machine.name if self.board.machine else "Sem equipamento")
+        basic_layout.addRow("Equipamento:", self.machine_label)
         basic_layout.addRow("Número de Série:", self.serial_label)
         basic_layout.addRow("Operador:", self.operator_label)
         basic_layout.addRow("Criada em:", self.created_label)
@@ -1271,8 +1245,8 @@ class MachineCatalogCard(QFrame):
         more = QToolButton(); more.setObjectName("cardIconButton"); more.setText("⋯")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)
-        edit = menu.addAction("Editar máquina")
-        delete = menu.addAction("Excluir máquina")
+        edit = menu.addAction("Editar equipamento")
+        delete = menu.addAction("Excluir equipamento")
         edit.triggered.connect(lambda: self.editRequested.emit(self.machine_id))
         delete.triggered.connect(lambda: self.deleteRequested.emit(self.machine_id))
         more.setMenu(menu)
@@ -1306,7 +1280,7 @@ class MachineCatalogCard(QFrame):
             self.board_cards[int(board.id)] = row
             self.boards_layout.addWidget(row)
 
-        self.empty_boards_label = QLabel("Nenhuma placa vinculada a esta máquina")
+        self.empty_boards_label = QLabel("Nenhuma placa vinculada a este equipamento")
         self.empty_boards_label.setObjectName("machineNoBoards")
         self.empty_boards_label.setVisible(not bool(boards))
         self.boards_layout.addWidget(self.empty_boards_label)
@@ -1327,9 +1301,9 @@ class MachineCatalogCard(QFrame):
         visible_count = len(visible_ids)
         self.meta_label.setText(f"{self._machine_code}  •  {visible_count} placa(s)")
         self.empty_boards_label.setText(
-            "Nenhuma placa corresponde aos filtros nesta máquina"
+            "Nenhuma placa corresponde aos filtros neste equipamento"
             if self.board_cards else
-            "Nenhuma placa vinculada a esta máquina"
+            "Nenhuma placa vinculada a este equipamento"
         )
         self.empty_boards_label.setVisible(visible_count == 0)
 
@@ -1368,7 +1342,7 @@ class FilterBar(QFrame):
 
         self.search = QLineEdit()
         self.search.setObjectName("catalogSearch")
-        self.search.setPlaceholderText("Buscar máquina, placa, modelo, código ou SN…")
+        self.search.setPlaceholderText("Buscar equipamento, placa, modelo, código ou SN…")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(300)
         self.search.setMinimumHeight(38)
@@ -1392,7 +1366,7 @@ class FilterBar(QFrame):
         row.addWidget(self.status)
 
         self.machine = self._make_filter(156)
-        self.machine.addItem("Todas as máquinas", None)
+        self.machine.addItem("Todos os equipamentos", None)
         self._bind_filter(self.machine, None)
         row.addWidget(self.machine)
 
@@ -1447,7 +1421,7 @@ class PlacaTab(QWidget):
     board_imported = pyqtSignal(object)  # Emite a placa importada
     board_details_requested = pyqtSignal(int)  # Abre /placas/:id/detalhes
 
-    EMPTY_TEXT = "📋\n\nSelecione uma placa na lista para ver os detalhes\nou uma máquina para ver o resumo dela"
+    EMPTY_TEXT = "📋\n\nSelecione uma placa na lista para ver os detalhes\nou um equipamento para ver o resumo dele"
     
     def __init__(self, session: Session, import_callback, current_user: User = None):
         super().__init__()
@@ -1517,13 +1491,13 @@ class PlacaTab(QWidget):
 
         text_box = QVBoxLayout(); text_box.setSpacing(3)
         eyebrow = QLabel("GESTÃO DE ATIVOS ELETRÔNICOS"); eyebrow.setObjectName("placaEyebrow")
-        title = QLabel("Máquinas e Placas"); title.setObjectName("placaTitle")
-        self.catalog_subtitle = QLabel("0 máquinas • 0 placas cadastradas")
+        title = QLabel("Equipamentos e Placas"); title.setObjectName("placaTitle")
+        self.catalog_subtitle = QLabel("0 equipamentos • 0 placas cadastradas")
         self.catalog_subtitle.setObjectName("placaSubtitle")
         text_box.addWidget(eyebrow); text_box.addWidget(title); text_box.addWidget(self.catalog_subtitle)
         row.addLayout(text_box, 1)
 
-        self.add_machine_btn = QPushButton("+ Nova Máquina")
+        self.add_machine_btn = QPushButton("+ Novo Equipamento")
         self.add_machine_btn.setObjectName("btnSecondaryHeader")
         self.add_machine_btn.setMinimumHeight(40)
         self.add_machine_btn.clicked.connect(self.add_machine)
@@ -1548,7 +1522,7 @@ class PlacaTab(QWidget):
 
     def create_stats_panel(self):
         wrap = QWidget(); row = QHBoxLayout(wrap); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(10)
-        row.addWidget(self._stat_card("TOTAL DE MÁQUINAS", "stat_machines"))
+        row.addWidget(self._stat_card("TOTAL DE EQUIPAMENTOS", "stat_machines"))
         row.addWidget(self._stat_card("TOTAL DE PLACAS", "stat_boards"))
         row.addWidget(self._stat_card("ATIVAS / INATIVAS", "stat_active_split", True))
         row.addWidget(self._stat_card("TESTES HOJE", "stat_tests_today"))
@@ -1561,11 +1535,11 @@ class PlacaTab(QWidget):
         top = QHBoxLayout(); top.setSpacing(8)
         title_box = QVBoxLayout(); title_box.setSpacing(1)
         title = QLabel("Inventário técnico"); title.setObjectName("catalogSectionTitle")
-        self.catalog_result_label = QLabel("Todas as máquinas e placas")
+        self.catalog_result_label = QLabel("Todos os equipamentos e placas")
         self.catalog_result_label.setObjectName("catalogSectionSub")
         title_box.addWidget(title); title_box.addWidget(self.catalog_result_label)
         top.addLayout(title_box, 1)
-        hint = QLabel("Clique na máquina para expandir • duplo clique na placa para abrir")
+        hint = QLabel("Clique no equipamento para expandir • duplo clique na placa para abrir")
         hint.setObjectName("catalogHint")
         top.addWidget(hint)
         layout.addLayout(top)
@@ -1584,10 +1558,10 @@ class PlacaTab(QWidget):
         self.catalog_empty = QFrame(); self.catalog_empty.setObjectName("catalogEmpty")
         empty_box = QVBoxLayout(self.catalog_empty); empty_box.setContentsMargins(28, 42, 28, 42); empty_box.setSpacing(8)
         icon = QLabel("PCB"); icon.setObjectName("emptyIcon"); icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_title = QLabel("Nenhuma máquina cadastrada"); self.empty_title.setObjectName("emptyTitle"); self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_text = QLabel("Cadastre a primeira máquina para começar a organizar suas placas.")
+        self.empty_title = QLabel("Nenhum equipamento cadastrado"); self.empty_title.setObjectName("emptyTitle"); self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_text = QLabel("Cadastre o primeiro equipamento para começar a organizar suas placas.")
         self.empty_text.setObjectName("emptyText"); self.empty_text.setAlignment(Qt.AlignmentFlag.AlignCenter); self.empty_text.setWordWrap(True)
-        empty_btn = QPushButton("+ Nova Máquina"); empty_btn.setObjectName("btnPrimary"); empty_btn.clicked.connect(self.add_machine)
+        empty_btn = QPushButton("+ Novo Equipamento"); empty_btn.setObjectName("btnPrimary"); empty_btn.clicked.connect(self.add_machine)
         empty_btn.setMaximumWidth(170)
         empty_box.addStretch(); empty_box.addWidget(icon); empty_box.addWidget(self.empty_title); empty_box.addWidget(self.empty_text)
         empty_box.addWidget(empty_btn, 0, Qt.AlignmentFlag.AlignCenter); empty_box.addStretch()
@@ -1942,7 +1916,7 @@ class PlacaTab(QWidget):
         hero = QFrame(); hero.setObjectName("machineHero")
         hero_row = QHBoxLayout(hero); hero_row.setContentsMargins(18, 16, 18, 16); hero_row.setSpacing(14)
         hero_text = QVBoxLayout(); hero_text.setSpacing(3)
-        eyebrow = QLabel("DOSSIÊ TÉCNICO DA MÁQUINA"); eyebrow.setObjectName("machineEyebrow")
+        eyebrow = QLabel("DOSSIÊ TÉCNICO DO EQUIPAMENTO"); eyebrow.setObjectName("machineEyebrow")
         title = QLabel(machine.name); title.setObjectName("machineHeroTitle"); title.setWordWrap(True)
         meta_parts = []
         if machine.code: meta_parts.append(f"Código {machine.code}")
@@ -1952,7 +1926,7 @@ class PlacaTab(QWidget):
         meta = QLabel("  •  ".join(meta_parts)); meta.setObjectName("machineHeroMeta")
         hero_text.addWidget(eyebrow); hero_text.addWidget(title); hero_text.addWidget(meta)
         hero_row.addLayout(hero_text, 1)
-        edit_btn = QPushButton("Editar máquina"); edit_btn.setObjectName("btnHeroSecondary"); edit_btn.clicked.connect(self.edit_machine)
+        edit_btn = QPushButton("Editar equipamento"); edit_btn.setObjectName("btnHeroSecondary"); edit_btn.clicked.connect(self.edit_machine)
         add_btn = QPushButton("Cadastrar placa"); add_btn.setObjectName("btnHeroPrimary"); add_btn.clicked.connect(self._start_board_for_machine)
         hero_row.addWidget(edit_btn); hero_row.addWidget(add_btn)
         self.details_layout.addWidget(hero)
@@ -1966,7 +1940,7 @@ class PlacaTab(QWidget):
         image_label = ImagePreviewLabel(); image_label.setMinimumSize(300, 245)
         real = resolve_image_path(machine.image_path) if machine.image_path else None
         if not (real and image_label.load(real)):
-            image_label.show_message("Nenhuma imagem cadastrada\nUse 'Editar máquina' para adicionar")
+            image_label.show_message("Nenhuma imagem cadastrada\nUse 'Editar equipamento' para adicionar")
         overview_top.addWidget(image_label, 1)
 
         summary = QFrame(); summary.setObjectName("machineSummaryCard"); sb = QVBoxLayout(summary); sb.setContentsMargins(16, 14, 16, 14); sb.setSpacing(8)
@@ -1989,7 +1963,7 @@ class PlacaTab(QWidget):
 
         boards_card = QFrame(); boards_card.setObjectName("machineContentCard")
         bc = QVBoxLayout(boards_card); bc.setContentsMargins(16, 14, 16, 14); bc.setSpacing(8)
-        bt = QLabel("PLACAS DESTA MÁQUINA"); bt.setObjectName("machineSectionLabel"); bc.addWidget(bt)
+        bt = QLabel("PLACAS DESTE EQUIPAMENTO"); bt.setObjectName("machineSectionLabel"); bc.addWidget(bt)
         if machine.boards:
             for board in sorted(machine.boards, key=lambda b: b.name.lower()):
                 row = QFrame(); row.setObjectName("linkedBoardRow"); rl = QHBoxLayout(row); rl.setContentsMargins(10, 8, 10, 8)
@@ -1998,7 +1972,7 @@ class PlacaTab(QWidget):
                 state = QLabel("ATIVA" if board.is_active else "INATIVA"); state.setObjectName("linkedBoardState")
                 rl.addWidget(name); rl.addWidget(detail, 1); rl.addWidget(state); bc.addWidget(row)
         else:
-            empty = QLabel("Nenhuma placa vinculada a esta máquina."); empty.setObjectName("machineEmpty"); bc.addWidget(empty)
+            empty = QLabel("Nenhuma placa vinculada a este equipamento."); empty.setObjectName("machineEmpty"); bc.addWidget(empty)
         ov.addWidget(boards_card)
         tabs.addTab(overview, "Visão Geral")
 
@@ -2283,7 +2257,7 @@ class PlacaTab(QWidget):
             lines.append("")
             lines.append(machine.description)
         lines.append("")
-        lines.append("Use \"Cadastrar nova placa\" para adicionar placas a esta máquina.")
+        lines.append("Use \"Cadastrar nova placa\" para adicionar placas a este equipamento.")
         return "\n".join(lines)
 
     def _last_runs_map(self, boards):
@@ -2305,7 +2279,7 @@ class PlacaTab(QWidget):
         current_type = self.filter_bar.board_type.currentData()
 
         self.filter_bar.machine.blockSignals(True)
-        self.filter_bar.machine.clear(); self.filter_bar.machine.addItem("Todas as máquinas", None)
+        self.filter_bar.machine.clear(); self.filter_bar.machine.addItem("Todos os equipamentos", None)
         for m in machines:
             self.filter_bar.machine.addItem(m.name, m.id)
         idx = self.filter_bar.machine.findData(current_machine)
@@ -2354,7 +2328,7 @@ class PlacaTab(QWidget):
             self.stat_boards.setText(str(len(boards)))
             self.stat_active_split.setText(f"{active} / {inactive}")
             self.stat_tests_today.setText(str(tests_today))
-            self.catalog_subtitle.setText(f"{len(machines)} máquina(s) • {len(boards)} placa(s) cadastrada(s)")
+            self.catalog_subtitle.setText(f"{len(machines)} equipamento(s) • {len(boards)} placa(s) cadastrada(s)")
 
             self._rebuild_catalog()
             if self.current_board:
@@ -2363,7 +2337,7 @@ class PlacaTab(QWidget):
                 self.show_machine_details(self.current_machine)
             elif not machines:
                 self.hide_board_details()
-            self.show_status(f"Carregadas {len(boards)} placas em {len(machines)} máquinas")
+            self.show_status(f"Carregadas {len(boards)} placas em {len(machines)} equipamentos")
         except Exception as exc:
             logger.exception("Erro ao carregar catálogo")
             self.show_error_state(str(exc))
@@ -2520,7 +2494,7 @@ class PlacaTab(QWidget):
                 title_row = QHBoxLayout()
                 title_row.setContentsMargins(0, 0, 0, 0)
                 title_row.setSpacing(8)
-                title = QLabel("PLACAS SEM MÁQUINA")
+                title = QLabel("PLACAS SEM EQUIPAMENTO")
                 title.setObjectName("orphanSectionTitle")
                 self._orphan_subtitle = QLabel(f"{len(orphan_boards)} placa(s) aguardando vínculo")
                 self._orphan_subtitle.setObjectName("orphanSectionMeta")
@@ -2583,10 +2557,10 @@ class PlacaTab(QWidget):
             self.catalog_scroll.setVisible(False)
             self.catalog_empty.setVisible(True)
             self.empty_title.setText(
-                "Nenhuma máquina cadastrada" if no_data else "Nenhum resultado encontrado"
+                "Nenhum equipamento cadastrado" if no_data else "Nenhum resultado encontrado"
             )
             self.empty_text.setText(
-                "Cadastre a primeira máquina para começar a organizar suas placas."
+                "Cadastre o primeiro equipamento para começar a organizar suas placas."
                 if no_data else
                 "Ajuste a busca ou os filtros para visualizar outros itens."
             )
@@ -2728,15 +2702,56 @@ class PlacaTab(QWidget):
         self.empty_title.setText("Não foi possível carregar o inventário")
         self.empty_text.setText(str(message) or "Tente novamente.")
 
+    def _sync_equipment_dossier(self, machine, documents, faults):
+        """Sincroniza documentos e defeitos do formulário com o dossiê persistido."""
+        existing_docs = {d.id: d for d in self.session.query(MachineDocument).filter(MachineDocument.machine_id == machine.id).all()}
+        keep_doc_ids = {int(d["id"]) for d in documents if d.get("id")}
+        for doc_id, obj in existing_docs.items():
+            if doc_id not in keep_doc_ids:
+                self.session.delete(obj)
+        for data in documents:
+            if data.get("id"):
+                obj = existing_docs.get(int(data["id"]))
+                if obj:
+                    obj.title = data.get("title") or obj.title
+                    obj.notes = data.get("notes") or None
+                continue
+            source = data.get("source_path")
+            if not source:
+                continue
+            stored = _copy_machine_document(source, machine.id)
+            self.session.add(MachineDocument(
+                machine_id=machine.id,
+                title=data.get("title") or Path(source).stem,
+                file_path=stored,
+                original_name=data.get("original_name") or Path(source).name,
+                notes=data.get("notes") or None,
+            ))
+
+        existing_faults = {f.id: f for f in self.session.query(MachineFault).filter(MachineFault.machine_id == machine.id).all()}
+        keep_fault_ids = {int(f["id"]) for f in faults if f.get("id")}
+        for fault_id, obj in existing_faults.items():
+            if fault_id not in keep_fault_ids:
+                self.session.delete(obj)
+        for data in faults:
+            payload = {k: data.get(k) for k in ("title", "symptom", "probable_cause", "solution", "occurrences", "notes")}
+            if data.get("id"):
+                obj = existing_faults.get(int(data["id"]))
+                if obj:
+                    for key, value in payload.items():
+                        setattr(obj, key, value)
+            else:
+                self.session.add(MachineFault(machine_id=machine.id, **payload))
+
     def add_machine(self):
         """Cadastra uma nova máquina."""
         dialog = MachineDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name, code, description, image = dialog.values()
+        name, code, description, image, documents, faults = dialog.values()
 
         if self._machine_name_taken(name):
-            QMessageBox.warning(self, "Máquina duplicada", f"Já existe uma máquina chamada '{name}'.")
+            QMessageBox.warning(self, "Equipamento duplicado", f"Já existe um equipamento chamado '{name}'.")
             return
 
         try:
@@ -2745,14 +2760,16 @@ class PlacaTab(QWidget):
                 name=name, code=code or None, description=description or None, image_path=image_path
             )
             self.session.add(machine)
+            self.session.flush()
+            self._sync_equipment_dossier(machine, documents, faults)
             self.session.commit()
             log_user_action(self.current_user, "machine_created", {"machine_name": name, "code": code})
             self.refresh_boards(select_machine_id=machine.id)
-            self.show_status(f"Máquina '{name}' cadastrada. Agora cadastre as placas dela.", "success")
+            self.show_status(f"Equipamento '{name}' cadastrado. Agora cadastre as placas dele.", "success")
         except Exception as e:
             self.session.rollback()
-            logger.error(f"Erro ao cadastrar máquina: {e}")
-            self.show_status(f"Erro ao cadastrar máquina: {e}", "error")
+            logger.error(f"Erro ao cadastrar equipamento: {e}")
+            self.show_status(f"Erro ao cadastrar equipamento: {e}", "error")
 
     def edit_machine(self):
         """Edita a máquina selecionada (ou a máquina da placa selecionada)."""
@@ -2763,10 +2780,10 @@ class PlacaTab(QWidget):
         dialog = MachineDialog(self, machine)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name, code, description, image = dialog.values()
+        name, code, description, image, documents, faults = dialog.values()
 
         if self._machine_name_taken(name, ignore_id=machine.id):
-            QMessageBox.warning(self, "Máquina duplicada", f"Já existe uma máquina chamada '{name}'.")
+            QMessageBox.warning(self, "Equipamento duplicado", f"Já existe um equipamento chamado '{name}'.")
             return
 
         try:
@@ -2775,14 +2792,15 @@ class PlacaTab(QWidget):
             machine.description = description or None
             if image != machine.image_path:  # trocou ou removeu a imagem
                 machine.image_path = import_image_to_project(image) if image else None
+            self._sync_equipment_dossier(machine, documents, faults)
             self.session.commit()
             log_user_action(self.current_user, "machine_updated", {"machine_name": name})
             self.refresh_boards()
-            self.show_status(f"Máquina '{name}' atualizada", "success")
+            self.show_status(f"Equipamento '{name}' atualizado", "success")
         except Exception as e:
             self.session.rollback()
-            logger.error(f"Erro ao editar máquina: {e}")
-            self.show_status(f"Erro ao editar máquina: {e}", "error")
+            logger.error(f"Erro ao editar equipamento: {e}")
+            self.show_status(f"Erro ao editar equipamento: {e}", "error")
 
     def delete_machine(self):
         """Exclui a máquina. As placas NÃO são apagadas: passam para 'Sem máquina'."""
@@ -2791,9 +2809,9 @@ class PlacaTab(QWidget):
             return
 
         count = len(machine.boards)
-        text = f"Excluir a máquina '{machine.name}'?\n\n"
+        text = f"Excluir o equipamento '{machine.name}'?\n\n"
         if count:
-            text += f"• As {count} placa(s) dela NÃO serão apagadas: ficarão em 'Sem máquina'.\n"
+            text += f"• As {count} placa(s) dele NÃO serão apagadas: ficarão em 'Sem equipamento'.\n"
         text += "\nEsta ação não pode ser desfeita."
 
         reply = QMessageBox.question(
@@ -2812,11 +2830,11 @@ class PlacaTab(QWidget):
             self.session.commit()
             log_user_action(self.current_user, "machine_deleted", {"machine_name": name, "boards_moved": count})
             self.refresh_boards()
-            self.show_status(f"Máquina '{name}' excluída", "success")
+            self.show_status(f"Equipamento '{name}' excluído", "success")
         except Exception as e:
             self.session.rollback()
-            logger.error(f"Erro ao excluir máquina: {e}")
-            QMessageBox.critical(self, "Erro", f"Erro ao excluir máquina:\n{e}")
+            logger.error(f"Erro ao excluir equipamento: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao excluir equipamento:\n{e}")
 
     def move_board(self):
         """Move a placa selecionada para outra máquina."""
@@ -2827,12 +2845,12 @@ class PlacaTab(QWidget):
         machines = self.session.query(Machine).order_by(Machine.name).all()
         if not machines:
             QMessageBox.information(
-                self, "Nenhuma máquina",
-                "Ainda não há máquinas cadastradas.\nUse o botão '➕ Nova Máquina' primeiro.",
+                self, "Nenhum equipamento",
+                "Ainda não há equipamentos cadastrados.\nUse o botão '+ Novo Equipamento' primeiro.",
             )
             return
 
-        options = ["— Sem máquina —"] + [self._machine_option_text(m) for m in machines]
+        options = ["— Sem equipamento —"] + [self._machine_option_text(m) for m in machines]
         current_index = 0
         for i, m in enumerate(machines, start=1):
             if m.id == board.machine_id:
@@ -2840,7 +2858,7 @@ class PlacaTab(QWidget):
                 break
 
         choice, ok = QInputDialog.getItem(
-            self, "Mover placa", f"Mover '{board.name}' para qual máquina?",
+            self, "Mover placa", f"Mover '{board.name}' para qual equipamento?",
             options, current_index, False,
         )
         if not ok:
@@ -2857,7 +2875,7 @@ class PlacaTab(QWidget):
                 "machine": new_machine.name if new_machine else None,
             })
             self.refresh_boards(select_board_id=board.id)
-            destino = new_machine.name if new_machine else "Sem máquina"
+            destino = new_machine.name if new_machine else "Sem equipamento"
             self.show_status(f"Placa '{board.name}' movida para '{destino}'", "success")
         except Exception as e:
             self.session.rollback()
@@ -2924,7 +2942,7 @@ class PlacaTab(QWidget):
         chips.setSpacing(8)
         chips.addWidget(chip("ATIVA" if board.is_active else "INATIVA",
                              "statusOn" if board.is_active else "statusOff"))
-        machine_name = board.machine.name if board.machine else "Sem máquina"
+        machine_name = board.machine.name if board.machine else "Sem equipamento"
         chips.addWidget(chip(machine_name, "machineChip"))
         chips.addStretch()
         self.details_layout.addLayout(chips)

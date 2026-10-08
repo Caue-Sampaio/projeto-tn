@@ -233,7 +233,7 @@ class BoardSelectDialog(QDialog):
         header_layout.setSpacing(2)
         title = QLabel("🔌  Selecionar placa para teste")
         title.setObjectName("selTitle")
-        subtitle = QLabel("1. Escolha a máquina     2. Escolha a placa dela")
+        subtitle = QLabel("1. Escolha o equipamento     2. Escolha a placa dele")
         subtitle.setObjectName("selSubtitle")
         header_layout.addWidget(title)
         header_layout.addWidget(subtitle)
@@ -246,7 +246,7 @@ class BoardSelectDialog(QDialog):
         body_layout.setContentsMargins(24, 20, 24, 12)
         body_layout.setSpacing(6)
 
-        machine_label = QLabel("MÁQUINA")
+        machine_label = QLabel("EQUIPAMENTO")
         machine_label.setObjectName("selFieldLabel")
         self.machine_combo = QComboBox()
         self.machine_combo.setMinimumHeight(38)
@@ -258,7 +258,7 @@ class BoardSelectDialog(QDialog):
             self.machine_combo.addItem(f"{machine.name}{code}  —  {count} placa(s) ativa(s)", machine.id)
         if self.NO_MACHINE in self._boards_by_machine:
             count = len(self._boards_by_machine[self.NO_MACHINE])
-            self.machine_combo.addItem(f"Sem máquina  —  {count} placa(s) ativa(s)", self.NO_MACHINE)
+            self.machine_combo.addItem(f"Sem equipamento  —  {count} placa(s) ativa(s)", self.NO_MACHINE)
 
         board_label = QLabel("PLACA")
         board_label.setObjectName("selFieldLabel")
@@ -303,7 +303,7 @@ class BoardSelectDialog(QDialog):
         self._apply_styles()
         self.machine_combo.currentIndexChanged.connect(self._fill_boards)
 
-        # Começa na máquina/placa que já estava selecionada
+        # Começa na equipamento/placa que já estava selecionada
         if current_board is not None:
             key = current_board.machine_id if current_board.machine_id is not None else self.NO_MACHINE
             index = self.machine_combo.findData(key)
@@ -329,9 +329,9 @@ class BoardSelectDialog(QDialog):
 
         if boards:
             self.board_list.setCurrentRow(0)
-            self.info_label.setText(f"{len(boards)} placa(s) ativa(s) nesta máquina")
+            self.info_label.setText(f"{len(boards)} placa(s) ativa(s) neste equipamento")
         else:
-            self.info_label.setText("Nenhuma placa ativa nesta máquina.")
+            self.info_label.setText("Nenhuma placa ativa neste equipamento.")
         self._update_ok_state()
 
     def _update_ok_state(self):
@@ -653,7 +653,7 @@ class TestExecutor(QWidget):
         self.lbl_board_sn = QLabel("SN: —")
         self.lbl_board_sn.setObjectName("mutedText")
         self.lbl_board_sn.setWordWrap(True)
-        self.btn_select_board = QPushButton("Selecionar maquina/placa")
+        self.btn_select_board = QPushButton("Selecionar equipamento/placa")
         self.btn_select_board.setObjectName("secondaryButton")
         self.btn_select_board.setFixedHeight(40)
         self.btn_select_board.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -1264,7 +1264,7 @@ class TestExecutor(QWidget):
             self.lbl_plan_meta.setText("Etapas: —")
 
         self.lbl_board.setText(board.name)
-        machine_text = f"  •  Máquina: {board.machine.name}" if board.machine else ""
+        machine_text = f"  •  Equipamento: {board.machine.name}" if board.machine else ""
         self.lbl_board_sn.setText(f"SN: {board.serial_number}{machine_text}")
         self.load_board_preview()
         if self.selected_plan is not None:
@@ -1362,7 +1362,7 @@ class TestExecutor(QWidget):
 
         board = dialog.selected_board
         self._set_board(board)
-        machine = f" | Máquina: {board.machine.name}" if board.machine else ""
+        machine = f" | Equipamento: {board.machine.name}" if board.machine else ""
         self.log(f"🔌 Placa selecionada: {board.name} (SN: {board.serial_number}){machine}")
 
     @staticmethod

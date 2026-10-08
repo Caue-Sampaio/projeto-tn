@@ -144,9 +144,31 @@ class BoardUnit(Base):
     images: Mapped[List["BoardImage"]] = relationship("BoardImage", back_populates="board", cascade="all, delete-orphan")
     test_points: Mapped[List["TestPoint"]] = relationship("TestPoint", back_populates="board", cascade="all, delete-orphan")
     test_runs: Mapped[List["TestRun"]] = relationship("TestRun", back_populates="board", cascade="all, delete-orphan")
+    documents: Mapped[List["BoardDocument"]] = relationship(
+        "BoardDocument", back_populates="board", cascade="all, delete-orphan",
+        order_by="BoardDocument.created_at.desc()",
+    )
 
     def __repr__(self):
         return f"BoardUnit(id={self.id}, name='{self.name}', serial='{self.serial_number}')"
+
+
+class BoardDocument(Base):
+    """Documento técnico associado diretamente a uma placa cadastrada."""
+    __tablename__ = "board_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    board_id: Mapped[int] = mapped_column(ForeignKey("board_units.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    file_path: Mapped[str] = mapped_column(String(700))
+    original_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    board: Mapped["BoardUnit"] = relationship("BoardUnit", back_populates="documents")
+
+    def __repr__(self):
+        return f"BoardDocument(id={self.id}, board={self.board_id}, title='{self.title}')"
 
 
 class BoardImage(Base):

@@ -363,7 +363,7 @@ class ReferenceMeasurements(QWidget):
 
         # Seleção de placa no MESMO padrão da aba Testes.
         # Em vez de um combo com todas as placas misturadas, mostramos um card
-        # compacto e reutilizamos o mesmo diálogo Máquina -> Placa.
+        # compacto e reutilizamos o mesmo diálogo Equipamento -> Placa.
         board_select_card = QFrame()
         board_select_card.setObjectName("boardSelectCard")
         board_select_layout = QHBoxLayout(board_select_card)
@@ -378,7 +378,7 @@ class ReferenceMeasurements(QWidget):
         self.selected_board_label = QLabel("Nenhuma placa selecionada")
         self.selected_board_label.setObjectName("infoValue")
         self.selected_board_label.setWordWrap(True)
-        self.selected_board_meta = QLabel("Máquina: —   •   Modelo: —   •   SN: —")
+        self.selected_board_meta = QLabel("Equipamento: —   •   Modelo: —   •   SN: —")
         self.selected_board_meta.setObjectName("muted")
         self.selected_board_meta.setWordWrap(True)
 
@@ -387,7 +387,7 @@ class ReferenceMeasurements(QWidget):
         board_info.addWidget(self.selected_board_meta)
         board_select_layout.addLayout(board_info, 1)
 
-        self.select_board_btn = QPushButton("Selecionar máquina/placa")
+        self.select_board_btn = QPushButton("Selecionar equipamento/placa")
         self.select_board_btn.setObjectName("selectBoardBtn")
         self.select_board_btn.setMinimumWidth(190)
         self.select_board_btn.setFixedHeight(38)
@@ -552,7 +552,7 @@ class ReferenceMeasurements(QWidget):
         return True
 
     def select_board(self):
-        """Abre exatamente o mesmo seletor Máquina -> Placa usado na aba Testes."""
+        """Abre exatamente o mesmo seletor Equipamento -> Placa usado na aba Testes."""
         has_boards = self.session.query(BoardUnit).filter_by(is_active=True).first() is not None
         if not has_boards:
             QMessageBox.warning(self, "Aviso", "Nenhuma placa ativa cadastrada.")
@@ -572,19 +572,19 @@ class ReferenceMeasurements(QWidget):
         board = self.current_board
         if board is None:
             self.selected_board_label.setText("Nenhuma placa selecionada")
-            self.selected_board_meta.setText("Máquina: —   •   Modelo: —   •   SN: —")
-            self.select_board_btn.setText("Selecionar máquina/placa")
+            self.selected_board_meta.setText("Equipamento: —   •   Modelo: —   •   SN: —")
+            self.select_board_btn.setText("Selecionar equipamento/placa")
             return
 
         model_name = board.board_model.name if getattr(board, "board_model", None) else (board.model or "—")
-        machine_name = board.machine.name if getattr(board, "machine", None) else "Sem máquina"
+        machine_name = board.machine.name if getattr(board, "machine", None) else "Sem equipamento"
         serial = board.serial_number or "—"
 
         self.selected_board_label.setText(board.name or "Placa sem nome")
         self.selected_board_meta.setText(
-            f"Máquina: {machine_name}   •   Modelo: {model_name}   •   SN: {serial}"
+            f"Equipamento: {machine_name}   •   Modelo: {model_name}   •   SN: {serial}"
         )
-        self.select_board_btn.setText("Trocar máquina/placa")
+        self.select_board_btn.setText("Trocar equipamento/placa")
 
     def _board_changed(self, board=None):
         if hasattr(self, "add_point_btn") and self.add_point_btn.isChecked():
@@ -659,7 +659,7 @@ class ReferenceMeasurements(QWidget):
 
     def _toggle_point_placement(self, enabled: bool):
         if enabled and not self.current_board:
-            QMessageBox.information(self, "Novo ponto", "Selecione primeiro uma máquina/placa.")
+            QMessageBox.information(self, "Novo ponto", "Selecione primeiro um equipamento/placa.")
             self.add_point_btn.blockSignals(True)
             self.add_point_btn.setChecked(False)
             self.add_point_btn.blockSignals(False)

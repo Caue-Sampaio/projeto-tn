@@ -108,3 +108,15 @@ Traceback (most recent call last):
     def _drain(self) -> None:
     
 KeyboardInterrupt
+
+--- 2026-10-08 19:06:14
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\main.py", line 545, in <module>
+    window = MainWindow(session=session, current_user=login.user, backup_manager=backup_manager)
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\main_window.py", line 104, in __init__
+    self.setup_sidebar()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\main_window.py", line 245, in setup_sidebar
+    self.btn_configuracoes.setCheckable(False)
+    ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute 'btn_configuracoes'

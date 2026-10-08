@@ -19,6 +19,7 @@ from .placa_tab import PlacaTab
 from .test_executor import TestExecutor
 from .reference_measurements import ReferenceMeasurements
 from .placa_detalhes import PlacaDetalhes
+from .technical_documents import TechnicalDocuments
 from db.models import BoardUnit
 
 
@@ -240,7 +241,7 @@ class MainWindow(QMainWindow):
 
         # Ícones em caracteres simples para manter aparência estável no Windows.
         self.btn_dashboard = SidebarButton("Dashboard", "▦")
-        self.btn_placas = SidebarButton("Placas", "▣")
+        self.btn_placas = SidebarButton("Equipamentos", "▣")
         self.btn_configuracoes = SidebarButton("Configurações", "⚙")
         self.btn_configuracoes.setCheckable(False)
         self.btn_logout = SidebarButton("Sair", "↪")
@@ -420,6 +421,8 @@ class MainWindow(QMainWindow):
             self.current_user,
         )
 
+        self.documents_view = TechnicalDocuments(self.session)
+
         self.dashboard_view.action_requested.connect(
             self.handle_dashboard_action
         )
@@ -428,12 +431,16 @@ class MainWindow(QMainWindow):
         self.placa_detalhes_view.test_requested.connect(self.open_board_test)
         self.placa_detalhes_view.preferences_requested.connect(self.open_board_preferences)
         self.placa_detalhes_view.board_updated.connect(self._on_board_updated)
+        self.documents_view.back_requested.connect(
+            lambda: self.switch_tab(0, self.btn_dashboard)
+        )
 
         self.stack.addWidget(self.dashboard_view)       # 0
         self.stack.addWidget(self.placas_view)          # 1
         self.stack.addWidget(self.testes_view)          # 2 (rota interna)
         self.stack.addWidget(self.referencias_view)     # 3 (rota interna)
         self.stack.addWidget(self.placa_detalhes_view)  # 4 /placas/:id/detalhes
+        self.stack.addWidget(self.documents_view)       # 5 documentos técnicos
 
         # Barra contextual das rotas internas ocultas da sidebar. Mantém o
         # placaId visível e permite voltar aos detalhes sem perder contexto.
@@ -520,8 +527,13 @@ class MainWindow(QMainWindow):
             return
         self._mark_sidebar(self.btn_placas)
         self.current_context_board_id = board.id
-        self.context_route_label.setText(f"/teste?placaId={board.id}  •  {board.name}")
-        self.context_bar.setVisible(True)
+
+        # A tela de Teste/Mapeamento já possui navegação própria
+        # (ex.: "← Voltar aos testes"). A barra contextual superior
+        # duplicava o botão de voltar e reduzia a área útil do osciloscópio.
+        self.context_route_label.clear()
+        self.context_bar.setVisible(False)
+
         self.testes_view.import_board_for_test(board)
         self.stack.setCurrentIndex(2)
 
@@ -561,22 +573,17 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def handle_dashboard_action(self, action_id):
-        """Cards do dashboard navegam para o fluxo centrado em Placas.
-
-        Testes e Referências deixaram de ser rotas globais. Quando já existe
-        uma placa selecionada, abrimos diretamente seus detalhes; caso contrário
-        mostramos a listagem de placas para o usuário escolher uma.
-        """
-        if action_id == "settings":
-            self._show_settings_info()
-            return
-        if action_id == "help":
-            self._show_help()
+        """Dashboard enxuto: inventário ou biblioteca de documentos técnicos."""
+        if action_id == "inventory":
+            self.open_boards_list()
             return
 
-        board = getattr(self.placas_view, "current_board", None)
-        if action_id in {"mapping", "pins", "report"} and board is not None:
-            self.open_board_details(board.id)
+        if action_id == "documents":
+            self._mark_sidebar(None)
+            if hasattr(self, "context_bar"):
+                self.context_bar.setVisible(False)
+            self.documents_view.refresh()
+            self.stack.setCurrentWidget(self.documents_view)
             return
 
         self.open_boards_list()

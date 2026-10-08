@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QRectF, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QPen, QPixmap, QFont, QPainter
+from PyQt6.QtCore import Qt, QRectF, pyqtSignal, QUrl
+from PyQt6.QtGui import QColor, QBrush, QPen, QPixmap, QFont, QPainter, QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -32,6 +32,7 @@ from db.models import (
     BoardModel,
     BoardUnit,
     BoardImage,
+    BoardDocument,
     OscilloscopeReference,
     TestPoint,
 )
@@ -39,6 +40,8 @@ from db.models import (
 from utils.image_paths import import_image_to_project, resolve_image_path
 
 from ui.marker_graphics import build_marker_path, normalize_marker_shape, normalize_marker_size, MarkerAppearanceDialog
+
+from ui.technical_documents import AddDocumentDialog, _copy_document, _resolve_file
 
 
 
@@ -81,68 +84,109 @@ def _float_or_none(text: str):
 
 
 class BoardEditDialog(QDialog):
-    """Edição cadastral sem sair da aba de detalhes."""
+    """Edição cadastral da placa com visual profissional e compacto."""
 
     def __init__(self, board: BoardUnit, parent=None):
         super().__init__(parent)
         self.board = board
-        self.setWindowTitle("Editar informações da placa")
+        self.setWindowTitle("Editar Placa")
         self.setModal(True)
-        self.setMinimumWidth(560)
+        self.resize(760, 560)
+        self.setMinimumSize(700, 520)
+        self._build_ui()
+        self._apply_style()
+        self.name.setFocus()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 20)
-        root.setSpacing(14)
+    def _field_label(self, text):
+        lbl = QLabel(text); lbl.setObjectName("boardEditFieldLabel"); return lbl
 
-        title = QLabel("Editar informações da placa")
-        title.setObjectName("dialogTitle")
-        root.addWidget(title)
+    def _input(self, value="", placeholder=""):
+        edit = QLineEdit(value or ""); edit.setObjectName("boardEditInput"); edit.setPlaceholderText(placeholder); edit.setMinimumHeight(42); return edit
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(10)
+    def _card(self, title, subtitle=""):
+        frame = QFrame(); frame.setObjectName("boardEditCard")
+        lay = QVBoxLayout(frame); lay.setContentsMargins(18, 16, 18, 16); lay.setSpacing(11)
+        t = QLabel(title); t.setObjectName("boardEditSectionTitle"); lay.addWidget(t)
+        if subtitle:
+            s = QLabel(subtitle); s.setObjectName("boardEditSectionSub"); s.setWordWrap(True); lay.addWidget(s)
+        return frame, lay
 
-        # Mantém somente os campos que já faziam parte do cadastro original
-        # de placas: nome, modelo, versão, número de série e status.
-        self.name = QLineEdit(board.name or "")
-        self.model = QLineEdit(board.model or "")
-        self.version = QLineEdit(board.version or "")
-        self.serial = QLineEdit(board.serial_number or "")
+    def _build_ui(self):
+        root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+
+        header = QFrame(); header.setObjectName("boardEditHeader")
+        hl = QHBoxLayout(header); hl.setContentsMargins(24, 18, 24, 18); hl.setSpacing(14)
+        title_box = QVBoxLayout(); title_box.setSpacing(3)
+        title = QLabel("Editar placa"); title.setObjectName("boardEditTitle")
+        subtitle = QLabel("Atualize os dados cadastrais da placa sem alterar seus pontos de teste, referências ou histórico.")
+        subtitle.setObjectName("boardEditSubtitle"); subtitle.setWordWrap(True)
+        title_box.addWidget(title); title_box.addWidget(subtitle); hl.addLayout(title_box, 1)
+        chip = QLabel("EDIÇÃO"); chip.setObjectName("boardEditChip"); hl.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(header)
+
+        body = QWidget(); body.setObjectName("boardEditBody")
+        bl = QVBoxLayout(body); bl.setContentsMargins(20, 18, 20, 18); bl.setSpacing(14)
+
+        info_card, info_l = self._card("Identificação da placa", "Mantenha os dados usados para localizar a placa no sistema atualizados.")
+        self.name = self._input(self.board.name, "Ex.: Placa de controle principal")
+        self.model = self._input(self.board.model, "Ex.: PCB-X1")
+        self.version = self._input(self.board.version, "Ex.: RevA, 1.0")
+        self.serial = self._input(self.board.serial_number, "Ex.: SN001")
+
+        info_l.addWidget(self._field_label("NOME DA PLACA *")); info_l.addWidget(self.name)
+        row = QHBoxLayout(); row.setSpacing(12)
+        col1 = QVBoxLayout(); col1.setSpacing(6); col1.addWidget(self._field_label("MODELO *")); col1.addWidget(self.model)
+        col2 = QVBoxLayout(); col2.setSpacing(6); col2.addWidget(self._field_label("VERSÃO *")); col2.addWidget(self.version)
+        row.addLayout(col1, 2); row.addLayout(col2, 1); info_l.addLayout(row)
+        info_l.addWidget(self._field_label("NÚMERO DE SÉRIE *")); info_l.addWidget(self.serial)
+        bl.addWidget(info_card)
+
+        status_card, status_l = self._card("Status da placa", "Use este controle para indicar se a placa continua ativa no inventário.")
+        status_row = QHBoxLayout(); status_row.setSpacing(10)
         self.active = QCheckBox("Placa ativa")
-        self.active.setChecked(bool(board.is_active))
+        self.active.setObjectName("boardEditCheck")
+        self.active.setChecked(bool(self.board.is_active))
+        status_text = QLabel("Desmarque somente quando a placa estiver fora de uso, arquivada ou desativada.")
+        status_text.setObjectName("boardEditHint"); status_text.setWordWrap(True)
+        status_row.addWidget(self.active); status_row.addWidget(status_text, 1)
+        status_l.addLayout(status_row)
+        bl.addWidget(status_card)
+        bl.addStretch(1)
+        root.addWidget(body, 1)
 
-        form.addRow("Nome", self.name)
-        form.addRow("Modelo", self.model)
-        form.addRow("Versão", self.version)
-        form.addRow("Número de série", self.serial)
-        form.addRow("Status", self.active)
-        root.addLayout(form)
+        footer = QFrame(); footer.setObjectName("boardEditFooter")
+        fl = QHBoxLayout(footer); fl.setContentsMargins(20, 12, 20, 12); fl.setSpacing(10)
+        hint = QLabel("* Campos obrigatórios"); hint.setObjectName("boardEditFooterHint")
+        cancel = QPushButton("Cancelar"); cancel.setObjectName("boardEditSecondary"); cancel.setMinimumHeight(40); cancel.clicked.connect(self.reject)
+        save = QPushButton("Salvar alterações"); save.setObjectName("boardEditPrimary"); save.setMinimumHeight(40); save.setMinimumWidth(165); save.setDefault(True); save.clicked.connect(self.accept)
+        fl.addWidget(hint); fl.addStretch(1); fl.addWidget(cancel); fl.addWidget(save)
+        root.addWidget(footer)
 
-        actions = QHBoxLayout()
-        actions.addStretch()
-        cancel = QPushButton("Cancelar")
-        save = QPushButton("Salvar alterações")
-        save.setObjectName("primary")
-        cancel.clicked.connect(self.reject)
-        save.clicked.connect(self.accept)
-        actions.addWidget(cancel)
-        actions.addWidget(save)
-        root.addLayout(actions)
-
-        self.setStyleSheet(
-            """
-            QDialog { background:#FFFFFF; color:#0F172A; }
-            QLabel#dialogTitle { font:700 18px 'Segoe UI'; color:#0F172A; }
-            QLineEdit, QTextEdit {
-                min-height:34px; border:1px solid #CBD5E1; border-radius:7px;
-                padding:5px 8px; background:#FFFFFF; color:#0F172A;
-            }
-            QPushButton { min-height:36px; padding:0 15px; border-radius:7px;
-                border:1px solid #CBD5E1; background:#FFFFFF; color:#334155; font-weight:600; }
-            QPushButton#primary { background:#0F766E; color:white; border-color:#0F766E; }
-            """
-        )
+    def _apply_style(self):
+        self.setStyleSheet("""
+            QDialog { background:#F4F7FA; color:#0F172A; font-family:"Segoe UI", "Inter", Arial, sans-serif; }
+            QFrame#boardEditHeader { background:#0B1220; border-bottom:1px solid #1E293B; }
+            QLabel#boardEditTitle { color:#FFFFFF; font-size:20px; font-weight:800; }
+            QLabel#boardEditSubtitle { color:#94A3B8; font-size:11px; }
+            QLabel#boardEditChip { color:#67E8F9; background:#0B2533; border:1px solid #155E75; border-radius:11px; padding:6px 10px; font-size:9px; font-weight:800; }
+            QWidget#boardEditBody { background:#F4F7FA; }
+            QFrame#boardEditCard { background:#FFFFFF; border:1px solid #DCE3EA; border-radius:11px; }
+            QLabel#boardEditSectionTitle { color:#0F172A; font-size:13px; font-weight:800; }
+            QLabel#boardEditSectionSub { color:#64748B; font-size:10px; }
+            QLabel#boardEditFieldLabel { color:#475569; font-size:9px; font-weight:800; letter-spacing:.5px; }
+            QLabel#boardEditHint { color:#64748B; font-size:10px; }
+            QLineEdit#boardEditInput { background:#F8FAFC; color:#0F172A; border:1px solid #CBD5E1; border-radius:8px; padding:9px 11px; font-size:12px; selection-background-color:#0F766E; selection-color:#FFFFFF; }
+            QLineEdit#boardEditInput:focus { background:#FFFFFF; border:1px solid #0F766E; }
+            QCheckBox#boardEditCheck { color:#0F172A; font-size:11px; font-weight:700; spacing:8px; }
+            QCheckBox#boardEditCheck::indicator { width:18px; height:18px; border:1px solid #CBD5E1; border-radius:5px; background:#FFFFFF; }
+            QCheckBox#boardEditCheck::indicator:checked { background:#0F766E; border-color:#0F766E; }
+            QFrame#boardEditFooter { background:#FFFFFF; border-top:1px solid #E2E8F0; }
+            QLabel#boardEditFooterHint { color:#94A3B8; font-size:9px; }
+            QPushButton#boardEditPrimary { background:#0F766E; color:#FFFFFF; border:none; border-radius:8px; padding:9px 18px; font-size:12px; font-weight:800; }
+            QPushButton#boardEditPrimary:hover { background:#0D9488; }
+            QPushButton#boardEditSecondary { background:#FFFFFF; color:#334155; border:1px solid #CBD5E1; border-radius:8px; padding:8px 14px; font-size:10px; font-weight:700; }
+            QPushButton#boardEditSecondary:hover { background:#F1F5F9; border-color:#94A3B8; }
+        """)
 
 
 class NewTestPointDialog(QDialog):
@@ -686,6 +730,49 @@ class PlacaDetalhes(QWidget):
         info_card.layout().addLayout(self.info_grid)
         body_layout.addWidget(info_card)
 
+        # Documentos técnicos da própria placa
+        docs_card = self._card(
+            "Documentos técnicos",
+            "Manuais, datasheets, diagramas, procedimentos e outros arquivos vinculados diretamente a esta placa.",
+        )
+        docs_top = QHBoxLayout(); docs_top.setSpacing(8)
+        self.documents_count = QLabel("0 documentos")
+        self.documents_count.setObjectName("documentCountChip")
+        docs_top.addWidget(self.documents_count)
+        docs_top.addStretch(1)
+        add_doc = QPushButton("+ Adicionar documento")
+        add_doc.setObjectName("primaryBtn")
+        add_doc.clicked.connect(self.add_board_document)
+        docs_top.addWidget(add_doc)
+        docs_card.layout().addLayout(docs_top)
+
+        self.documents_table = QTableWidget(0, 4)
+        self.documents_table.setHorizontalHeaderLabels(["Documento", "Arquivo", "Adicionado em", "Observações"])
+        self._setup_table(self.documents_table)
+        self.documents_table.setMinimumHeight(190)
+        self.documents_table.setMaximumHeight(260)
+        self.documents_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.documents_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.documents_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.documents_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.documents_table.cellDoubleClicked.connect(lambda *_: self.open_board_document())
+        docs_card.layout().addWidget(self.documents_table)
+
+        docs_actions = QHBoxLayout(); docs_actions.setSpacing(8)
+        docs_hint = QLabel("Duplo clique abre o arquivo selecionado.")
+        docs_hint.setObjectName("cardSub")
+        docs_actions.addWidget(docs_hint)
+        docs_actions.addStretch(1)
+        open_doc = QPushButton("Abrir arquivo")
+        open_doc.setObjectName("secondaryBtn")
+        open_doc.clicked.connect(self.open_board_document)
+        remove_doc = QPushButton("Remover documento")
+        remove_doc.setObjectName("dangerBtn")
+        remove_doc.clicked.connect(self.remove_board_document)
+        docs_actions.addWidget(open_doc); docs_actions.addWidget(remove_doc)
+        docs_card.layout().addLayout(docs_actions)
+        body_layout.addWidget(docs_card)
+
         # Acesso contextual às telas ocultas da sidebar
         actions_card = QFrame(); actions_card.setObjectName("workflowCard")
         ac = QHBoxLayout(actions_card); ac.setContentsMargins(16, 14, 16, 14); ac.setSpacing(10)
@@ -918,6 +1005,7 @@ class PlacaDetalhes(QWidget):
         self.status_chip.setProperty("state", "active" if b.is_active else "inactive")
         self.status_chip.style().unpolish(self.status_chip); self.status_chip.style().polish(self.status_chip)
         self._refresh_info()
+        self._refresh_documents()
         self._refresh_board_canvas()
         self._refresh_test_points()
         self._refresh_references()
@@ -930,7 +1018,7 @@ class PlacaDetalhes(QWidget):
 
         b = self.board
         model = b.board_model
-        machine_name = b.machine.name if b.machine else "Sem máquina"
+        machine_name = b.machine.name if b.machine else "Sem equipamento"
         # Somente as informações que já eram exibidas originalmente na tela
         # de placas. Nada de fabricante/cliente/OS/observações extras aqui.
         values = [
@@ -938,7 +1026,7 @@ class PlacaDetalhes(QWidget):
             ("Modelo", b.model or (model.name if model else "—")),
             ("Versão", b.version or "—"),
             ("Número de série", b.serial_number or "—"),
-            ("Máquina", machine_name),
+            ("Equipamento", machine_name),
             ("Cadastrada em", _fmt_date(b.created_at)),
         ]
         for idx, (label, value) in enumerate(values):
@@ -949,6 +1037,95 @@ class PlacaDetalhes(QWidget):
             v = QLabel(str(value)); v.setObjectName("infoValue"); v.setWordWrap(True)
             lay.addWidget(l); lay.addWidget(v)
             self.info_grid.addWidget(box, row, col)
+
+    def _refresh_documents(self):
+        if not self.board:
+            return
+        docs = (
+            self.session.query(BoardDocument)
+            .filter(BoardDocument.board_id == self.board.id)
+            .order_by(BoardDocument.created_at.desc())
+            .all()
+        )
+        self.documents_count.setText(f"{len(docs)} documento(s)")
+        self.documents_table.setRowCount(0)
+        for doc in docs:
+            row = self.documents_table.rowCount()
+            self.documents_table.insertRow(row)
+            self.documents_table.setRowHeight(row, 40)
+            title = QTableWidgetItem(doc.title or "—")
+            title.setData(Qt.ItemDataRole.UserRole, doc.id)
+            filename = QTableWidgetItem(doc.original_name or (doc.file_path or "—").split("/")[-1])
+            created = QTableWidgetItem(_fmt_date(doc.created_at))
+            notes = QTableWidgetItem(doc.notes or "—")
+            for col, item in enumerate((title, filename, created, notes)):
+                self.documents_table.setItem(row, col, item)
+        if docs:
+            self.documents_table.selectRow(0)
+
+    def _selected_board_document(self):
+        row = self.documents_table.currentRow()
+        if row < 0:
+            return None
+        item = self.documents_table.item(row, 0)
+        if not item:
+            return None
+        doc_id = item.data(Qt.ItemDataRole.UserRole)
+        return self.session.get(BoardDocument, int(doc_id)) if doc_id is not None else None
+
+    def add_board_document(self):
+        if not self.board:
+            return
+        dlg = AddDocumentDialog(f"Placa: {self.board.name}", self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        title, source, notes = dlg.values()
+        try:
+            stored = _copy_document(source, "board", self.board.id)
+            doc = BoardDocument(
+                board_id=self.board.id,
+                title=title,
+                file_path=stored,
+                original_name=source.replace("\\", "/").split("/")[-1],
+                notes=notes,
+            )
+            self.session.add(doc)
+            self.session.commit()
+            self._refresh_documents()
+        except Exception as exc:
+            self.session.rollback()
+            QMessageBox.critical(self, "Documento", f"Não foi possível adicionar o documento:\n\n{exc}")
+
+    def open_board_document(self):
+        doc = self._selected_board_document()
+        if not doc:
+            QMessageBox.information(self, "Documento", "Selecione um documento da placa.")
+            return
+        path = _resolve_file(doc.file_path)
+        if not path:
+            QMessageBox.warning(self, "Arquivo não encontrado", "O documento está cadastrado, mas o arquivo não foi localizado no projeto.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def remove_board_document(self):
+        doc = self._selected_board_document()
+        if not doc:
+            QMessageBox.information(self, "Documento", "Selecione um documento da placa.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Remover documento",
+            f"Remover '{doc.title}' dos documentos desta placa?\n\nO arquivo físico será mantido na pasta do projeto.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.session.delete(doc)
+            self.session.commit()
+            self._refresh_documents()
+        except Exception as exc:
+            self.session.rollback()
+            QMessageBox.critical(self, "Documento", f"Não foi possível remover o documento:\n\n{exc}")
 
     def _refresh_test_points(self):
         points = self.session.query(TestPoint).filter_by(board_id=self.board.id).order_by(TestPoint.refdes).all()
@@ -1514,6 +1691,11 @@ class PlacaDetalhes(QWidget):
             QTableWidget::item { padding:6px 8px; border-bottom:1px solid #F1F5F9; }
             QHeaderView::section { background:#F8FAFC; color:#64748B; border:none; border-bottom:1px solid #E2E8F0;
                 padding:7px 8px; font:800 9px 'Segoe UI'; }
+            QLabel#documentCountChip { color:#0F766E; background:#ECFDF5; border:1px solid #A7F3D0;
+                border-radius:9px; padding:4px 8px; font:800 9px 'Segoe UI'; }
+            QPushButton#dangerBtn { background:#FFFFFF; color:#B91C1C; border:1px solid #FECACA;
+                border-radius:8px; min-height:35px; padding:0 13px; font-weight:700; }
+            QPushButton#dangerBtn:hover { background:#FEF2F2; border-color:#FCA5A5; }
 
             QGraphicsView { background:#070C12; border:1px solid #243244; border-radius:9px; }
             QFrame#mapControls { background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; }

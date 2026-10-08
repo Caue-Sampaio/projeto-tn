@@ -570,16 +570,15 @@ class MeasurementDialog(QDialog):
 # POINT EDIT POPUP
 # ══════════════════════════════════════════════════════════════════
 class PointEditDialog(QDialog):
-    """Popup para editar os dados de um ponto sem ocupar espaço no scanner."""
+    """Popup profissional para edição de ponto sem poluir a tela principal."""
 
     def __init__(self, tp: TestPoint, parent=None):
         super().__init__(parent)
         self.tp = tp
         self.setWindowTitle(f"Editar ponto - {tp.refdes}")
         self.setModal(True)
-        self.setMinimumWidth(560)
-        self.setMinimumHeight(560)
-        self.resize(600, 620)
+        self.resize(820, 700)
+        self.setMinimumSize(760, 640)
         self._build_ui()
         self._load_values()
         self._apply_style()
@@ -593,130 +592,156 @@ class PointEditDialog(QDialog):
         field = QLineEdit()
         field.setObjectName("pointDialogInput")
         field.setPlaceholderText(placeholder)
-        field.setMinimumHeight(34)
+        field.setMinimumHeight(38)
         return field
+
+    def _value(self, text="—") -> QLabel:
+        lbl = QLabel(text)
+        lbl.setObjectName("pointDialogValue")
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return lbl
+
+    def _card(self, title: str, subtitle: str | None = None):
+        frame = QFrame(); frame.setObjectName("pointDialogCard")
+        lay = QVBoxLayout(frame); lay.setContentsMargins(16, 14, 16, 14); lay.setSpacing(12)
+        head = QVBoxLayout(); head.setSpacing(2)
+        ttl = QLabel(title); ttl.setObjectName("pointDialogSectionTitle")
+        head.addWidget(ttl)
+        if subtitle:
+            sub = QLabel(subtitle); sub.setObjectName("pointDialogSectionSub")
+            head.addWidget(sub)
+        lay.addLayout(head)
+        return frame, lay
+
+    def _build_kv_grid(self, rows):
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(20)
+        grid.setVerticalSpacing(10)
+        for i, (label, widget) in enumerate(rows):
+            r = i // 2
+            c = (i % 2) * 2
+            lab = self._label(label)
+            grid.addWidget(lab, r, c)
+            grid.addWidget(widget, r, c + 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        return grid
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(14)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # Cabeçalho compacto.
-        header = QHBoxLayout()
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
+        header = QFrame(); header.setObjectName("pointDialogHeader")
+        header_l = QHBoxLayout(header); header_l.setContentsMargins(20, 16, 20, 16); header_l.setSpacing(12)
+        title_box = QVBoxLayout(); title_box.setSpacing(3)
         self.title_label = QLabel(self.tp.refdes or "Ponto")
         self.title_label.setObjectName("pointDialogTitle")
-        subtitle = QLabel("Edite somente as informações necessárias e salve.")
+        subtitle = QLabel("Edite os valores esperados, tolerâncias e observações deste ponto.")
         subtitle.setObjectName("pointDialogMuted")
         title_box.addWidget(self.title_label)
         title_box.addWidget(subtitle)
-        header.addLayout(title_box)
-        header.addStretch()
-        root.addLayout(header)
+        header_l.addLayout(title_box)
+        header_l.addStretch()
+        self.slot_chip = QLabel("IMAGEM 1"); self.slot_chip.setObjectName("pointDialogChip")
+        self.marker_chip = QLabel("Círculo • 16 px"); self.marker_chip.setObjectName("pointDialogChipAlt")
+        header_l.addWidget(self.slot_chip)
+        header_l.addWidget(self.marker_chip)
+        root.addWidget(header)
 
-        info = QFrame()
-        info.setObjectName("pointDialogInfo")
-        info_layout = QFormLayout(info)
-        info_layout.setContentsMargins(14, 12, 14, 12)
-        info_layout.setHorizontalSpacing(16)
-        info_layout.setVerticalSpacing(8)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget(); body_l = QVBoxLayout(body); body_l.setContentsMargins(18, 16, 18, 16); body_l.setSpacing(14)
 
-        self.refdes_value = QLabel("—")
-        self.coords_value = QLabel("—")
-        self.scope_channel_value = QLabel("—")
-        self.scope_vpp_value = QLabel("—")
-        self.scope_vrms_value = QLabel("—")
-        self.scope_frequency_value = QLabel("—")
-        self.last_capture_time = QLabel("—")
-        for widget in (
-            self.refdes_value, self.coords_value, self.scope_channel_value,
-            self.scope_vpp_value, self.scope_vrms_value, self.scope_frequency_value,
-            self.last_capture_time,
-        ):
-            widget.setObjectName("pointDialogValue")
+        summary_card, summary_l = self._card("Resumo do ponto", "Informações de identificação e da última captura.")
+        self.refdes_value = self._value()
+        self.coords_value = self._value()
+        self.scope_channel_value = self._value()
+        self.scope_vpp_value = self._value()
+        self.scope_vrms_value = self._value()
+        self.scope_frequency_value = self._value()
+        self.last_capture_time = self._value()
+        self.marker_value = self._value()
+        summary_l.addLayout(self._build_kv_grid([
+            ("RefDes", self.refdes_value),
+            ("Coordenadas", self.coords_value),
+            ("Canal capturado", self.scope_channel_value),
+            ("Marcador", self.marker_value),
+            ("Vpp medido", self.scope_vpp_value),
+            ("Vrms medido", self.scope_vrms_value),
+            ("Frequência medida", self.scope_frequency_value),
+            ("Capturada em", self.last_capture_time),
+        ]))
+        body_l.addWidget(summary_card)
 
-        info_layout.addRow(self._label("RefDes"), self.refdes_value)
-        info_layout.addRow(self._label("Coordenadas"), self.coords_value)
-        info_layout.addRow(self._label("Canal capturado"), self.scope_channel_value)
-        info_layout.addRow(self._label("Vpp medido"), self.scope_vpp_value)
-        info_layout.addRow(self._label("Vrms medido"), self.scope_vrms_value)
-        info_layout.addRow(self._label("Frequência medida"), self.scope_frequency_value)
-        info_layout.addRow(self._label("Capturada em"), self.last_capture_time)
-        root.addWidget(info)
+        config_wrap = QHBoxLayout(); config_wrap.setSpacing(14)
 
-        form_frame = QFrame()
-        form_frame.setObjectName("pointDialogForm")
-        form = QFormLayout(form_frame)
-        form.setContentsMargins(14, 14, 14, 14)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-
-        self.expected_voltage = self._line("Ex: 3.3, 5.0, 12.0")
+        expected_card, expected_l = self._card("Valores esperados", "Dados nominais usados como base do diagnóstico.")
+        expected_form = QFormLayout(); expected_form.setHorizontalSpacing(16); expected_form.setVerticalSpacing(12)
+        expected_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        expected_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.expected_voltage = self._line("Ex.: 3.3")
         self.expected_voltage.setValidator(QDoubleValidator(-1000, 1000, 4))
-        self.expected_current = self._line("Ex: 0.1, 0.5, 1.0")
+        self.expected_current = self._line("Ex.: 0.250")
         self.expected_current.setValidator(QDoubleValidator(-100, 100, 4))
-        self.expected_frequency = self._line("Ex: 1000, 12000")
+        self.expected_frequency = self._line("Ex.: 1000")
         self.expected_frequency.setValidator(QDoubleValidator(0, 1e12, 2))
-        self.expected_waveform = self._line("Senoidal, Quadrada, PWM...")
+        self.expected_waveform = self._line("Senoidal, quadrada, PWM...")
+        expected_form.addRow(self._label("Tensão esperada (V)"), self.expected_voltage)
+        expected_form.addRow(self._label("Corrente esperada (A)"), self.expected_current)
+        expected_form.addRow(self._label("Frequência esperada (Hz)"), self.expected_frequency)
+        expected_form.addRow(self._label("Forma de onda"), self.expected_waveform)
+        expected_l.addLayout(expected_form)
+        config_wrap.addWidget(expected_card, 1)
 
-        self.tolerance_voltage = self._line("+/- V")
+        tol_card, tol_l = self._card("Tolerâncias", "Faixa aceitável para comparação automática.")
+        tol_form = QFormLayout(); tol_form.setHorizontalSpacing(16); tol_form.setVerticalSpacing(12)
+        tol_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        tol_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.tolerance_voltage = self._line("± V")
         self.tolerance_voltage.setValidator(QDoubleValidator(0, 1000, 4))
-        self.tolerance_current = self._line("+/- A")
+        self.tolerance_current = self._line("± A")
         self.tolerance_current.setValidator(QDoubleValidator(0, 100, 4))
-        self.tolerance_frequency = self._line("+/- Hz")
+        self.tolerance_frequency = self._line("± Hz")
         self.tolerance_frequency.setValidator(QDoubleValidator(0, 1e12, 2))
+        tol_form.addRow(self._label("Tensão"), self.tolerance_voltage)
+        tol_form.addRow(self._label("Corrente"), self.tolerance_current)
+        tol_form.addRow(self._label("Frequência"), self.tolerance_frequency)
+        tol_l.addLayout(tol_form)
+        config_wrap.addWidget(tol_card, 1)
+        body_l.addLayout(config_wrap)
 
-        form.addRow(self._label("Tensão esperada (V)"), self.expected_voltage)
-        form.addRow(self._label("Corrente esperada (A)"), self.expected_current)
-        form.addRow(self._label("Frequência esperada (Hz)"), self.expected_frequency)
-        form.addRow(self._label("Forma de onda"), self.expected_waveform)
+        notes_card, notes_l = self._card("Observações", "Anotações técnicas relevantes para este ponto.")
+        self.notes = QTextEdit(); self.notes.setObjectName("pointDialogNotes")
+        self.notes.setPlaceholderText("Ex.: sinal instável em aquecimento, referência crítica, medir com placa aterrada...")
+        self.notes.setMinimumHeight(120)
+        notes_l.addWidget(self.notes)
+        body_l.addWidget(notes_card)
+        body_l.addStretch(1)
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
 
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setObjectName("pointDialogSeparator")
-        form.addRow(separator)
-
-        form.addRow(self._label("Tolerância tensão"), self.tolerance_voltage)
-        form.addRow(self._label("Tolerância corrente"), self.tolerance_current)
-        form.addRow(self._label("Tolerância frequência"), self.tolerance_frequency)
-        root.addWidget(form_frame)
-
-        notes_title = self._label("Observações")
-        root.addWidget(notes_title)
-        self.notes = QTextEdit()
-        self.notes.setObjectName("pointDialogNotes")
-        self.notes.setPlaceholderText("Observações sobre este ponto de teste...")
-        self.notes.setMinimumHeight(76)
-        self.notes.setMaximumHeight(110)
-        root.addWidget(self.notes)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
-        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        if save_button:
-            save_button.setText("Salvar alterações")
-            save_button.setObjectName("pointDialogSave")
-        if cancel_button:
-            cancel_button.setText("Cancelar")
-            cancel_button.setObjectName("pointDialogCancel")
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        footer = QFrame(); footer.setObjectName("pointDialogFooter")
+        footer_l = QHBoxLayout(footer); footer_l.setContentsMargins(18, 12, 18, 12); footer_l.setSpacing(10)
+        self.appearance_button = QPushButton("Aparência do marcador")
+        self.appearance_button.setObjectName("pointDialogSecondary")
+        self.appearance_button.clicked.connect(self._edit_appearance)
+        cancel_button = QPushButton("Cancelar")
+        cancel_button.setObjectName("pointDialogSecondary")
+        cancel_button.clicked.connect(self.reject)
+        save_button = QPushButton("Salvar alterações")
+        save_button.setObjectName("pointDialogPrimary")
+        save_button.clicked.connect(self._accept_if_valid)
+        footer_l.addWidget(self.appearance_button)
+        footer_l.addStretch()
+        footer_l.addWidget(cancel_button)
+        footer_l.addWidget(save_button)
+        root.addWidget(footer)
 
     def _accept_if_valid(self):
         try:
             self.values()
         except ValueError:
-            QMessageBox.warning(
-                self,
-                "Valor inválido",
-                "Revise os campos numéricos antes de salvar.",
-            )
+            QMessageBox.warning(self, "Valor inválido", "Revise os campos numéricos antes de salvar.")
             return
         self.accept()
 
@@ -726,21 +751,26 @@ class PointEditDialog(QDialog):
         self.title_label.setStyleSheet(f"color: {color_hex};")
         self.refdes_value.setText(tp.refdes or "—")
         self.coords_value.setText(f"({tp.x}, {tp.y})")
+        slot = int(getattr(tp, 'image_slot', 1) or 1)
+        self.slot_chip.setText(f"IMAGEM {slot}")
+
+        shape = getattr(tp, 'marker_shape', 'circle') or 'circle'
+        size = int(getattr(tp, 'marker_size', 16) or 16)
+        marker_text = f"{shape.capitalize()} • {size} px"
+        self.marker_chip.setText(marker_text)
+        self.marker_value.setText(f"{marker_text} • {color_hex}")
 
         channel = getattr(tp, "last_scope_channel", None)
         vpp = getattr(tp, "last_scope_vpp_v", None)
         vrms = getattr(tp, "last_scope_vrms_v", None)
         freq = getattr(tp, "last_scope_frequency_hz", None)
-
         self.scope_channel_value.setText(f"CH{channel}" if channel else "—")
         self.scope_vpp_value.setText(f"{vpp:.6g} V" if vpp is not None else "—")
         self.scope_vrms_value.setText(f"{vrms:.6g} V" if vrms is not None else "—")
         self.scope_frequency_value.setText(f"{freq:.6g} Hz" if freq is not None else "—")
 
         captured_at = getattr(tp, "last_scope_at", None)
-        self.last_capture_time.setText(
-            captured_at.strftime("%d/%m/%Y %H:%M:%S") if captured_at else "—"
-        )
+        self.last_capture_time.setText(captured_at.strftime("%d/%m/%Y %H:%M:%S") if captured_at else "—")
 
         self.expected_voltage.setText("" if tp.expected_voltage_v is None else str(tp.expected_voltage_v))
         self.expected_current.setText("" if tp.expected_current_a is None else str(tp.expected_current_a))
@@ -750,6 +780,18 @@ class PointEditDialog(QDialog):
         self.tolerance_current.setText("" if tp.tolerance_current_a is None else str(tp.tolerance_current_a))
         self.tolerance_frequency.setText("" if tp.tolerance_frequency_hz is None else str(tp.tolerance_frequency_hz))
         self.notes.setPlainText(tp.notes or "")
+
+    def _edit_appearance(self):
+        dlg = MarkerAppearanceDialog(self.tp, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        shape, size = dlg.values()
+        self.tp.marker_shape = shape
+        self.tp.marker_size = size
+        color_hex = getattr(self.tp, "marker_color", None) or Theme.DEFAULT_POINT_COLOR
+        marker_text = f"{shape.capitalize()} • {size} px"
+        self.marker_chip.setText(marker_text)
+        self.marker_value.setText(f"{marker_text} • {color_hex}")
 
     @staticmethod
     def _to_float(text: str):
@@ -774,51 +816,107 @@ class PointEditDialog(QDialog):
                 color: {Theme.TEXT_PRIMARY};
                 font-family: "Segoe UI", "Inter", Arial, sans-serif;
             }}
+            QFrame#pointDialogHeader {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {Theme.BG_SURFACE}, stop:1 {Theme.BG_SURFACE_ALT});
+                border-bottom: 1px solid {Theme.BORDER_SUBTLE};
+            }}
             QLabel#pointDialogTitle {{
                 color: {Theme.TEXT_BRIGHT};
-                font-size: 18px;
+                font-size: 20px;
                 font-weight: 800;
             }}
-            QLabel#pointDialogMuted {{ color: {Theme.TEXT_MUTED}; font-size: 10px; }}
-            QLabel#pointDialogLabel {{ color: {Theme.TEXT_SECONDARY}; font-size: 10px; }}
-            QLabel#pointDialogValue {{ color: {Theme.ACCENT_CYAN}; font-family: Consolas; font-weight: 700; }}
-            QFrame#pointDialogInfo, QFrame#pointDialogForm {{
+            QLabel#pointDialogMuted {{
+                color: {Theme.TEXT_MUTED};
+                font-size: 11px;
+            }}
+            QLabel#pointDialogLabel {{
+                color: {Theme.TEXT_SECONDARY};
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+            }}
+            QLabel#pointDialogValue {{
+                color: {Theme.ACCENT_CYAN};
+                background: {Theme.BG_INPUT};
+                border: 1px solid {Theme.BORDER_SUBTLE};
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-family: Consolas, 'Cascadia Code', monospace;
+                font-weight: 700;
+                min-height: 20px;
+            }}
+            QFrame#pointDialogCard {{
                 background: {Theme.BG_SURFACE};
                 border: 1px solid {Theme.BORDER_SUBTLE};
-                border-radius: 7px;
+                border-radius: 12px;
             }}
-            QFrame#pointDialogSeparator {{
-                background: {Theme.BORDER_SUBTLE};
-                border: none;
-                max-height: 1px;
+            QLabel#pointDialogSectionTitle {{
+                color: {Theme.TEXT_BRIGHT};
+                font-size: 12px;
+                font-weight: 800;
+            }}
+            QLabel#pointDialogSectionSub {{
+                color: {Theme.TEXT_MUTED};
+                font-size: 10px;
+            }}
+            QLabel#pointDialogChip, QLabel#pointDialogChipAlt {{
+                padding: 6px 10px;
+                border-radius: 11px;
+                font-size: 10px;
+                font-weight: 800;
+            }}
+            QLabel#pointDialogChip {{
+                color: {Theme.ACCENT_CYAN};
+                background: rgba(34,211,238,0.12);
+                border: 1px solid rgba(34,211,238,0.35);
+            }}
+            QLabel#pointDialogChipAlt {{
+                color: {Theme.TEXT_PRIMARY};
+                background: {Theme.BG_INPUT};
+                border: 1px solid {Theme.BORDER_SUBTLE};
             }}
             QLineEdit#pointDialogInput, QTextEdit#pointDialogNotes {{
                 background: {Theme.BG_INPUT};
                 color: {Theme.TEXT_PRIMARY};
                 border: 1px solid {Theme.BORDER_SUBTLE};
-                border-radius: 5px;
-                padding: 6px 8px;
+                border-radius: 8px;
+                padding: 8px 10px;
                 selection-background-color: {Theme.ACCENT_BLUE};
             }}
             QLineEdit#pointDialogInput:focus, QTextEdit#pointDialogNotes:focus {{
-                border-color: {Theme.ACCENT_BLUE};
+                border: 1px solid {Theme.ACCENT_BLUE};
+                background: {Theme.BG_SURFACE_ALT};
             }}
-            QPushButton#pointDialogSave {{
+            QFrame#pointDialogFooter {{
+                background: {Theme.BG_SURFACE};
+                border-top: 1px solid {Theme.BORDER_SUBTLE};
+            }}
+            QPushButton#pointDialogPrimary {{
                 background: {Theme.ACCENT_BLUE};
                 color: {Theme.TEXT_BRIGHT};
                 border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-weight: 700;
+                border-radius: 8px;
+                padding: 10px 18px;
+                font-weight: 800;
+                min-height: 38px;
             }}
-            QPushButton#pointDialogCancel {{
+            QPushButton#pointDialogPrimary:hover {{ background: {Theme.ACCENT_CYAN}; color: {Theme.BG_PRIMARY}; }}
+            QPushButton#pointDialogSecondary {{
                 background: {Theme.BG_SURFACE_ALT};
                 color: {Theme.TEXT_PRIMARY};
                 border: 1px solid {Theme.BORDER_SUBTLE};
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-weight: 600;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-weight: 700;
+                min-height: 38px;
             }}
+            QPushButton#pointDialogSecondary:hover {{
+                border-color: {Theme.ACCENT_BLUE};
+                background: {Theme.BG_INPUT};
+            }}
+            QScrollArea {{ border: none; background: {Theme.BG_PRIMARY}; }}
+            QScrollArea > QWidget > QWidget {{ background: {Theme.BG_PRIMARY}; }}
         """)
 
 

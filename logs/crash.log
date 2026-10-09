@@ -144,3 +144,11 @@ Traceback (most recent call last):
     body = QWidget()
            ^^^^^^^
 NameError: name 'QWidget' is not defined
+
+--- 2026-10-09 18:59:45
+Traceback (most recent call last):
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\main.py", line 566, in <module>
+    from ui.main_window import MainWindow
+  File "c:\Users\leona\OneDrive\Documentos\PROJETO TN ELETROSISTEM 2\ui\main_window.py", line 24, in <module>
+    from .system_settings import SystemSettingsDialog
+ModuleNotFoundError: No module named 'ui.system_settings'

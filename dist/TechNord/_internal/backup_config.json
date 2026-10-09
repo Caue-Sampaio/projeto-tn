@@ -1,0 +1,19 @@
+{
+  "backup_directory": "C:\\Users\\leona\\OneDrive\\Documentos\\PROJETO TN ELETROSISTEM 2\\dist\\TechNord\\_internal\\backups",
+  "daily_backup": true,
+  "backup_on_close": true,
+  "max_backups": 30,
+  "compression_level": 6,
+  "backup_reports": true,
+  "backup_logs": true,
+  "backup_images": true,
+  "backup_documents": true,
+  "last_backup": "2026-10-09T20:56:02",
+  "last_daily_backup": "2026-10-09T20:55:56",
+  "last_close_backup": "2026-10-09T20:56:02",
+  "backup_stats": {
+    "total_backups": 2,
+    "last_successful": "2026-10-09T20:56:02",
+    "total_size_mb": 0.28
+  }
+}

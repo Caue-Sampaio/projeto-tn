@@ -6,8 +6,19 @@ from typing import Any, Dict
 
 from sqlalchemy import URL, create_engine
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import sys
+from pathlib import Path
+
+def get_application_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = get_application_root()
 CONFIG_FILE = PROJECT_ROOT / "network_config.json"
+
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "mode": "sqlite",
@@ -74,6 +85,13 @@ def get_database_url(config: dict | None = None):
     return f"sqlite:///{path.as_posix()}"
 
 
+def _is_network_path(config: dict) -> bool:
+    """Detecta se o caminho do SQLite é um caminho de rede (UNC)."""
+    raw = str(config.get("sqlite_path") or "")
+    shared = str(config.get("shared_storage") or "")
+    return raw.startswith("\\\\") or shared.startswith("\\\\")
+
+
 def create_db_engine(config: dict | None = None):
     cfg = config or load_network_config()
     url = get_database_url(cfg)
@@ -86,7 +104,23 @@ def create_db_engine(config: dict | None = None):
             future=True,
             connect_args={"connect_timeout": timeout, "application_name": "TechNordTestFlow"},
         )
-    return create_engine(url, future=True)
+
+    # SQLite — configurações extras para uso em rede
+    from sqlalchemy import event
+
+    engine = create_engine(url, future=True, pool_pre_ping=True)
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        # busy_timeout: espera até 15 s se outro processo estiver escrevendo
+        cursor.execute("PRAGMA busy_timeout = 15000")
+        if _is_network_path(cfg):
+            # WAL não funciona em drives de rede; usa DELETE (padrão seguro)
+            cursor.execute("PRAGMA journal_mode = DELETE")
+        cursor.close()
+
+    return engine
 
 
 # Mantido por compatibilidade com módulos antigos que ainda importam esta constante.
